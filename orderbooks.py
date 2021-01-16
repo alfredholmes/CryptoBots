@@ -17,6 +17,8 @@ class OrderBook:
 
 
 
+
+
 	#parse updates
 	def update(self, new_data):
 		
@@ -90,8 +92,7 @@ class OrderBook:
 
 
 class OrderBookManager:
-	async def connect(self):
-		uri = "wss://stream.binance.com:9443/stream"
+	async def connect(self, uri="wss://stream.binance.com:9443/stream"):
 		self.client = await websockets.client.connect(uri, ssl=True)
 		self.id = 0
 		#automatically parse messages as they arrive
