@@ -20,8 +20,8 @@ Asynchronous Bot Framework for Binance Cryptocurrency Exchange. As the Binance A
 
 To run the other examples that read account information, create the file `keys.py` which just assignes your binance api and secret keys to the variables `api` and `seceret`. For example, after setting up an API key on Binance, run
 
-		echo 'api = "your api key"' >> keys.py
-		echo 'secret' = "your secret key" >> keys.py
+		echo 'API = "your api key"' >> keys.py
+		echo 'SECRET' = "your secret key" >> keys.py
 
 and then run
 

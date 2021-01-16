@@ -17,6 +17,7 @@ async def main():
 
 
 	await acc.get_account_data()
+	print(acc.spot_balances)
 
 	await client.aclose()
 
