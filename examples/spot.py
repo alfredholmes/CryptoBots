@@ -1,8 +1,8 @@
 import sys
 sys.path.append("./")
 import keys
-from orderbooks import OrderBookManager
-from account import account
+from binancebots.orderbooks import OrderBookManager
+from binancebots.account import account
 
 
 import httpx

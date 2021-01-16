@@ -4,6 +4,7 @@ Asynchronous Bot Framework for Binance Cryptocurrency Exchange. As the Binance A
 
 ### Current Features
 - Asynchronous order book management
+- Basic Spot Account Interaction
 
 
 ### To do:
