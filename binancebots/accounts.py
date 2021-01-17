@@ -18,7 +18,7 @@ class SpotAccount:
 			self.order_book_manager = order_book_manager
 			self.own_orderbook = False
 		else:
-			self.order_book_manager = OrderBookManager()
+			self.orderbook_manager = OrderBookManager()
 			self.own_orderbook = True
 		
 		self.endpoint = endpoint
@@ -27,6 +27,15 @@ class SpotAccount:
 
 		self.default_base_asset = 'BNB'
 		self.backup_base_asset = 'BTC'
+
+		self.spot_balances = None
+
+
+	#close the connection
+	async def close(self):
+		await self.httpx_client.aclose()
+		if self.own_orderbook:
+			await self.orderbook_manager.close_connection()
 	
 
 	async def get_account_data(self):
@@ -64,11 +73,47 @@ class SpotAccount:
 					self.market_filters[symbol]['min_order_quote'] = float(f['minNotional'])
 	
 
-	#close the connection
-	async def close(self):
-		await self.httpx_client.aclose()
-		if self.own_orderbook:
-			await self.order_book_manager.close_connection()
+	async def track_orderbooks(self, *symbols):
+		await self.orderbook_manager.subscribe_to_depths(*(symbol for symbol in symbols))
+
+
+	async def weighted_portfolio(symbols=None, base='BTC'):
+		#currently assyming everything has a btc market
+		#if the symbols is None then we will just get the whole portfolio
+		#get account data if we need to
+		if self.spot_balances is None:
+			self.get_account_balance()
+
+		#if no symbols were passed then just get the whole portfolio weighted
+		if symbols is None:
+
+			if len(self.spot_balances) == 1:
+				return {self.spot_balances.keys()[0]: 1.0}
+
+			untracked = []
+			for currency in self.spot_balances:
+				if currency + base in self.market_filters:
+					if (currency + base).lower() not in self.orderbook_manager.subscriptions:
+						untracked.append((currency + base).lower())
+				elif (base + currency).lower() in self.market_filters:
+					if (base + currency).lower() not in self.orderbook_manager.subscriptions:
+						untracked.append((base + currency).lower())
+
+			await self.track_orderbooks(*(symbol for symbol in untracked))
+
+			weighted = {}
+
+			for currency, balance in self.spot_balances.items():
+				if currency == base:
+					weighted[currency] = balance
+				if currency + base in self.market_filters:
+					weighted[currency] = balance * self.orderbook_manager.market_price()
+				elif base + currency in self.market_filters:
+					#
+		else:
+			pass
+
+
 
 	#Trade Methods
 	#buy volume worth of to_buy with to_sell

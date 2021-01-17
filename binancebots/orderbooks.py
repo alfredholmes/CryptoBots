@@ -92,6 +92,8 @@ class OrderBook:
 
 
 class OrderBookManager:
+	def __init__(self):
+		self.initialized = False
 	async def connect(self, uri="wss://stream.binance.com:9443/stream"):
 		self.client = await websockets.client.connect(uri, ssl=True)
 		self.id = 0
@@ -105,10 +107,18 @@ class OrderBookManager:
 
 		self.requests = {}
 
+		self.initialized = True
+		self.subscriptions = set()
 
+
+	async def subscribe_to_depths(self, *symbols):
+		if not self.initialized:
+			await self.connect()
+
+		await asyncio.gather(*(self.subscribe_to_depth(symbol) for symbol in symbols))
 
 	async def subscribe_to_depth(self, symbol):
-
+		
 		#subscribe to the websocket stream
 		self.id += 1
 		data = {
@@ -120,7 +130,7 @@ class OrderBookManager:
 
 		self.requests[self.id] = {'data': data, 'response': 'response not yet recived'}
 		await self.client.send(json.dumps(data))
-
+		self.subscriptions.add(symbol)
 		#get depth the snapshot
 		params = {
 			'symbol': symbol.upper(),
@@ -156,7 +166,8 @@ class OrderBookManager:
 
 		self.requests[self.id] = {'data': data, 'response': 'response not yet recived'}
 
-
+		self.subscriptions.remove(symbol)
+		del self.books[symbol]
 		await self.client.send(json.dumps(data))
 		del self.books[symbol]
 
@@ -167,9 +178,10 @@ class OrderBookManager:
 	
 
 	async def close_connection(self):
-		self.socket_listener.cancel()
-		await self.http_client.aclose()
-		await self.client.close()
+		if self.initialized:
+			self.socket_listener.cancel()
+			await self.http_client.aclose()
+			await self.client.close()
 
 
 

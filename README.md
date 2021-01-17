@@ -53,24 +53,36 @@ import asyncio
 
 ```python
 async def main():
-	order_books = OrderBookManager()
-	acc = account(keys.API, keys.SECRET, order_books)
-
+	acc = account(keys.API, keys.SECRET)
 
 	await acc.get_account_data()
 	print(acc.spot_balances)
 
-	await acc.aclose()
+	await acc.close()
 
 if __name__ == '__main__':
 	asyncio.run(main())	
 ```
-if we run the script you will see a print out of your spot account balance. `SpotAccount` does not track 0 balances so if you have not deposited to Binance you will get an empty dictionary.
+if we run the script you will see a print out of your spot account balance. `SpotAccount` does not track 0 balances so if you have not deposited to Binance you will get an empty dictionary. The function `SpotAccount.get_account_data` pulls the available spot market meta-data from the Binance API and gets the current account information, which contains the account balances.
 
 	$ python3 examples/rebalance.py
 	{'USDT': 120.30743}
   
-3. Now we'll call the `SpotAccount.weighted_portfolio` function to get the relative values of the portfolio.
+3. Now we'll call the `SpotAccount.weighted_portfolio` function to get the relative values of the portfolio and decide if the portfolio is far enough away from the desired portfolio to bother rebalancing: we'll say that a portfolio needs rebalancing if at least 10% of the portfolio is in the wrong asset. Before calling the `SpotAccount.weighted_portfolio` we need to use the websocket API to listen to the relevant orderbooks so that the bot can access real time market data. The new main function looks like this.
+
+```python
+async def main():
+	acc = account(keys.API, keys.SECRET)
+
+	await acc.get_account_data()
+	print(acc.spot_balances)
+
+	weighted_portfolio = await acc.weighted_portfolio()
+	print(weighted_portfolio)
+
+	await acc.aclose()
+```
+
 
 ### Example Trading Bot - Third party trading logic!
 

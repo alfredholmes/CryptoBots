@@ -9,12 +9,12 @@ import asyncio
 
 
 async def main():
-	order_books = OrderBookManager()
-	acc = SpotAccount(keys.API, keys.SECRET, order_books)
+	acc = SpotAccount(keys.API, keys.SECRET)
 
 
-	await acc.get_account_data()
-	print(acc.spot_balances)
+	await acc.track_orderbooks('btcusdt', 'ethusdt','ethbtc')
+	portfolio = await acc.weighted_portfolio()
+	
 
 
 	await acc.close()
