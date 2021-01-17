@@ -39,5 +39,5 @@ to get the live spot data for the account.
 ### Example Trading Bot - Automatic portfolio balancing
 This is an example of how to set up automatic spot account balancing with the BinanceBot framework. In this guide we set up a simple script that connects to the binance websockets API to track the prices of various currencies and trades when the portfolio is sufficiently different from the target portfolio. The final script can be found at `examples/rebalance.py`
 
-### Example Trading Bot - Third party trading logic
+### Example Trading Bot - Third party trading logic!
 
