@@ -14,10 +14,10 @@ Asynchronous Bot Framework for Binance Cryptocurrency Exchange. As the Binance A
 - Interaction with flexible savings 
 
 ### Running
-		$ git clone https://github.com/alfredholmes/BinanceBots
-		$ cd BinanceBots
-		$ pip3 install -r requirements.txt
-		$ python3 examples/ticker.py btcusdt ethusdt
+	$ git clone https://github.com/alfredholmes/BinanceBots
+	$ cd BinanceBots
+	$ pip3 install -r requirements.txt
+	$ python3 examples/ticker.py btcusdt ethusdt
 
 To run the other examples that read account information, create the file `keys.py` which just assignes your binance api and secret keys to the variables `api` and `seceret`. For example, after setting up an API key on Binance, run
 
@@ -65,11 +65,10 @@ async def main():
 if __name__ == '__main__':
 	asyncio.run(main())	
 ```
-
 if we run the script you will see a print out of your spot account balance. `SpotAccount` does not track 0 balances so if you have not deposited to Binance you will get an empty dictionary.
 
-		$ python3 examples/rebalance.py
-		{'USDT': 120.30743}
+	$ python3 examples/rebalance.py
+	{'USDT': 120.30743}
   
 
 ### Example Trading Bot - Third party trading logic!
