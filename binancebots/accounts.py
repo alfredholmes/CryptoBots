@@ -3,13 +3,24 @@ import json
 import datetime
 
 import hashlib, hmac, urllib
+import httpx
 
-class account:
-	def __init__(self, httpx_client, api, secret, order_book_manager, endpoint='https://api.binance.com/api/v3/'):
-		self.httpx_client = httpx_client
+from binancebots.orderbooks import OrderBookManager
+
+
+
+class SpotAccount:
+	def __init__(self, api, secret, order_book_manager=None, endpoint='https://api.binance.com/api/v3/'):
+		self.httpx_client = httpx.AsyncClient()
 		self.api_key = api
 		self.secret_key = secret
-		self.order_book_manager = order_book_manager
+		if order_book_manager is not None:
+			self.order_book_manager = order_book_manager
+			self.own_orderbook = False
+		else:
+			self.order_book_manager = OrderBookManager()
+			self.own_orderbook = True
+		
 		self.endpoint = endpoint
 		self.exchange_data = None
 		self.market_filters = {}
@@ -51,6 +62,14 @@ class account:
 					self.market_filters[symbol]['step_size'] = float(f['stepSize'])
 				elif f['filterType'] == 'MIN_NOTIONAL':
 					self.market_filters[symbol]['min_order_quote'] = float(f['minNotional'])
+	
+
+	#close the connection
+	async def close(self):
+		await self.httpx_client.aclose()
+		if self.own_orderbook:
+			await self.order_book_manager.close_connection()
+
 	#Trade Methods
 	#buy volume worth of to_buy with to_sell
 	async def limit_buy(self, to_buy, to_sell, volume):
@@ -59,17 +78,9 @@ class account:
 	
 	async def market_buy(self, to_buy, to_sell, volume):
 		if to_buy + to_sell in self.market_filters:
-			
+			pass
 		elif to_sell + to_buy in self.market_filters:
-			#need to get the price to convert the volume
-
-			#then trade the oppisite way
-		
-
-		#see if we can trade via BNB
-		elif:
-
-			#execute sell to BNB and then to to_sell
+			pass
 
 	#sell volume worth of to_sell to to_buy
 	async def limit_sell(self, to_sell, to_buy, volume):
@@ -91,7 +102,7 @@ class account:
 	def sign_params(self, params={}):
 		ts = int(datetime.datetime.now().timestamp() * 1000)
 		params['timestamp'] = str(ts)
-		params['signature'] = generate_signature(params)
+		params['signature'] = self.generate_signature(params)
 
 		return params
 
