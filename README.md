@@ -32,7 +32,7 @@ to get the live spot data for the account.
 
 ### Advice for writing and running a BinanceBot bot
 
-1. Create a new binance account or sub account to avoid any unnecessary complication. If you'd like to support the project and recive a 10% discount on fees, consider signing up with this [referal link]{https://www.binance.com/en/register?ref=DJK8PVAG}.
+1. Create a new binance account or sub account to avoid any unnecessary complication. If you'd like to support the project and recive a 10% discount on fees, consider signing up with this [referal link](https://www.binance.com/en/register?ref=DJK8PVAG).
 2. A good way to design your bot is for the script you write to only complete one task and manage running the bot with the operating system. In this way you do not need to have loops running forever in your code, making bugs much easier to find and fix and any errors will hopefully be limited to one instance of the bot running. If the bot crashes then it will be executed again by the OS in the future, rather than crashing and never running again. Any state data you need to save can be pickled or serialized in any way you prefer - see `examples/mamr.py` for an example of this.
 
 
