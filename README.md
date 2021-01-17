@@ -70,6 +70,7 @@ if we run the script you will see a print out of your spot account balance. `Spo
 	$ python3 examples/rebalance.py
 	{'USDT': 120.30743}
   
+3. Now we'll call the `SpotAccount.weighted_portfolio` function to get the relative values of the portfolio.
 
 ### Example Trading Bot - Third party trading logic!
 
