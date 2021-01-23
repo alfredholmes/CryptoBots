@@ -10,12 +10,10 @@ import asyncio
 
 async def main():
 	acc = SpotAccount(keys.API, keys.SECRET)
+	await acc.get_account_data()
 
-
-	await acc.track_orderbooks('btcusdt', 'ethusdt','ethbtc')
-	portfolio = await acc.weighted_portfolio()
-	
-
+	weighted_portfolio = await acc.weighted_portfolio(['USDT', 'BTC', 'ETH'])
+	print(weighted_portfolio)
 
 	await acc.close()
 	

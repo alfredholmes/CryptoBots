@@ -21,12 +21,12 @@ Asynchronous Bot Framework for Binance Cryptocurrency Exchange. As the Binance A
 
 To run the other examples that read account information, create the file `keys.py` which just assignes your binance api and secret keys to the variables `api` and `seceret`. For example, after setting up an API key on Binance, run
 
-		$ echo 'API = "your api key"' >> keys.py
-		$ echo 'SECRET' = "your secret key" >> keys.py
+	$ echo 'API = "your api key"' >> keys.py
+	$ echo 'SECRET' = "your secret key" >> keys.py
 
 and then run
 
-		$ python3 examples/spotaccount.py
+	$ python3 examples/spotaccount.py
 
 to get the live spot data for the account.
 
@@ -72,17 +72,20 @@ if we run the script you will see a print out of your spot account balance. `Spo
 
 ```python
 async def main():
-	acc = account(keys.API, keys.SECRET)
-
+	acc = SpotAccount(keys.API, keys.SECRET)
 	await acc.get_account_data()
-	print(acc.spot_balances)
 
-	weighted_portfolio = await acc.weighted_portfolio()
+	weighted_portfolio = await acc.weighted_portfolio(['USDT', 'BTC', 'ETH'])
 	print(weighted_portfolio)
 
-	await acc.aclose()
+	await acc.close()
 ```
+and running this gives the following output
+
+	$ python3 examples/rebalance.py
+	{'USDT': 1.0, 'BTC': 0.0, 'ETH': 0.0}
 
 
+4. Next we'll construct a target portfolio and get the account to trade into that portfolio using the `SpotAccount.trade_to_portfolio`function
 ### Example Trading Bot - Third party trading logic!
 

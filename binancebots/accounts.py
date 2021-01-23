@@ -28,6 +28,8 @@ class SpotAccount:
 		self.default_base_asset = 'BNB'
 		self.backup_base_asset = 'BTC'
 
+
+
 		self.spot_balances = None
 
 
@@ -39,6 +41,8 @@ class SpotAccount:
 	
 
 	async def get_account_data(self):
+		if not self.orderbook_manager.initialized:
+			await self.orderbook_manager.connect()
 		if self.exchange_data is None:
 			await self.get_exchange_data()
 
@@ -77,45 +81,99 @@ class SpotAccount:
 		await self.orderbook_manager.subscribe_to_depths(*(symbol for symbol in symbols))
 
 
-	async def weighted_portfolio(symbols=None, base='BTC'):
+	async def weighted_portfolio(self, symbols=None, base='BTC'):
 		#currently assyming everything has a btc market
 		#if the symbols is None then we will just get the whole portfolio
 		#get account data if we need to
 		if self.spot_balances is None:
-			self.get_account_balance()
+			await self.get_account_data()
 
-		#if no symbols were passed then just get the whole portfolio weighted
+		#calculate the total portfolio
+		
+
+		if len(self.spot_balances) == 1 and symbols is None:
+			return {k: 1.0 for k in self.spot_balances.keys()}
+
+		untracked = []
+		for currency in self.spot_balances:
+			if currency + base in self.market_filters:
+				if (currency + base).lower() not in self.orderbook_manager.subscriptions:
+					untracked.append((currency + base).lower())
+			elif base + currency in self.market_filters:
+				if (base + currency).lower() not in self.orderbook_manager.subscriptions:
+					untracked.append((base + currency).lower())
+
+		await self.track_orderbooks(*(symbol for symbol in untracked))
+
+		weighted = {}
+
+		for currency, balance in self.spot_balances.items():
+
+			if currency == base:
+				weighted[currency] = balance
+			if currency + base in self.market_filters:
+				weighted[currency] = balance * self.orderbook_manager.market_price(True, (currency + base).lower())
+			elif base + currency in self.market_filters:
+				weighted[currency] = balance / self.orderbook_manager.market_price(False, (base + currency).lower())
+
+		
+
+		#if no symbols were passed then just return the total portfolio
+		self.weighted = {currency: value / total for currency, value in weighted.items()}
 		if symbols is None:
+			total = sum([v for v in weighted.values()])
+			return self.weighted
+			 
 
-			if len(self.spot_balances) == 1:
-				return {self.spot_balances.keys()[0]: 1.0}
+		#otherwise just return the relevant portfolio
+		portfolio = {s: 0 for s in symbols}
 
-			untracked = []
-			for currency in self.spot_balances:
-				if currency + base in self.market_filters:
-					if (currency + base).lower() not in self.orderbook_manager.subscriptions:
-						untracked.append((currency + base).lower())
-				elif (base + currency).lower() in self.market_filters:
-					if (base + currency).lower() not in self.orderbook_manager.subscriptions:
-						untracked.append((base + currency).lower())
+		#now add in the relevant info
+		for s in symbols:
+			if s in weighted:
+				portfolio[s] = weighted[s]
 
-			await self.track_orderbooks(*(symbol for symbol in untracked))
+		total = sum([v for v in portfolio.values()])
+		self.weighted_portfolio = 
+		return {currency: value / total for currency, value in portfolio.items()}
 
-			weighted = {}
+	async def trade_to_portfolio(self, target):
+		current_portfolio = self.weighted_portfolio([s.upper() for s in target.values()])
+		delta = {s: target[s] - current_portfolio[s.upper()] for s in target}
 
-			for currency, balance in self.spot_balances.items():
-				if currency == base:
-					weighted[currency] = balance
-				if currency + base in self.market_filters:
-					weighted[currency] = balance * self.orderbook_manager.market_price()
-				elif base + currency in self.market_filters:
-					#
-		else:
-			pass
+		#subscribe to the relevant orderbooks
+		markets = []
+		for s in delta:
+			if s == self.default_base_asset:
+				continue
+			elif (s + self.default_base_asset).upper() in self.market_filters:
+				market = (s + self.default_base_asset).lower()
+			elif (self.default_base_asset + s).upper() in self.market_filters:
+				market = (self.default_base_asset + s).lower()
+			elif (s + self.backup_base_asset).upper() in self.market_filters:
+				market = (s + self.backup_base_asset).lower()
+			elif (self.backup_base_asset + s).upper() in self.market_filters:
+				market = (self.backup_base_asset + s).lower()
+			else:
+				print('Error: cannot find market for ', s)
+				continue
+
+				markets.append(market)
+		self.orderbook_manager.subscribe_to_depths(*markets)
+
+		to_sell = {}
+		for symbol, volume
+
+		await market_trade(to_sell)
+
+
+
 
 
 
 	#Trade Methods
+	#main trade function, takes a dict with 
+
 	#buy volume worth of to_buy with to_sell
 	async def limit_buy(self, to_buy, to_sell, volume):
 		pass
@@ -141,7 +199,7 @@ class SpotAccount:
 		response = await self.httpx_client.get(self.endpoint + 'account', headers=headers, params=params)
 		account = json.loads(response.text)
 
-		self.spot_balances = {asset['asset']: float(asset['free']) for asset in account['balances'] if float(asset['free']) != 0}
+		self.spot_balances = {asset['asset']: float(asset['free']) + float(asset['locked']) for asset in account['balances'] if float(asset['free']) != 0}
 
 
 	def sign_params(self, params={}):

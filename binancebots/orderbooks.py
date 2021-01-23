@@ -120,6 +120,9 @@ class OrderBookManager:
 	async def subscribe_to_depth(self, symbol):
 		
 		#subscribe to the websocket stream
+		if symbol in self.books:
+			#already subscribed
+			return
 		self.id += 1
 		data = {
 			"method": "SUBSCRIBE",
@@ -185,8 +188,14 @@ class OrderBookManager:
 
 
 
-
-
+	def market_price(self, buy, symbol, volume = 0):
+		if symbol not in self.books:
+			print(symbol, 'missing!')
+			return
+		elif buy:
+			return self.books[symbol].market_buy_price(volume)
+		else:
+			return self.books[symbol].market_sell_price(volume)
 
 
 
