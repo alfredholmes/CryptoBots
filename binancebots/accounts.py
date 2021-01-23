@@ -139,36 +139,150 @@ class SpotAccount:
 
 	async def trade_to_portfolio(self, target):
 		current_portfolio = self.weighted_portfolio([s.upper() for s in target.values()])
-		delta = {s: target[s] - current_portfolio[s.upper()] for s in target}
+		delta = {s.upper(): target[s] - current_portfolio[s.upper()] for s in target}
 
-		#subscribe to the relevant orderbooks
-		markets = []
-		for s in delta:
-			if s == self.default_base_asset:
-				continue
-			elif (s + self.default_base_asset).upper() in self.market_filters:
-				market = (s + self.default_base_asset).lower()
-			elif (self.default_base_asset + s).upper() in self.market_filters:
-				market = (self.default_base_asset + s).lower()
-			elif (s + self.backup_base_asset).upper() in self.market_filters:
-				market = (s + self.backup_base_asset).lower()
-			elif (self.backup_base_asset + s).upper() in self.market_filters:
-				market = (self.backup_base_asset + s).lower()
-			else:
-				print('Error: cannot find market for ', s)
-				continue
+		#subscribe to the all the relevant orderbooks to reduce fees
+		markets = set()
+		for s1 in delta:
+			if s1 + self.default_base_asset in self.market_filters:
+				markets.add((s1 + self.default_base_asset).lower())
+			if s1 + self.backup_base_asset in self.market_filters:
+				markets.add((s1 + self.backup_base_asset).lower())
 
-				markets.append(market)
+			for s2 in delta:
+				if s1 == s2:
+					continue
+				if s1 + s2 in self.market_filters:
+					markets.add((s1 + s2).lower) 
+
+
+
 		self.orderbook_manager.subscribe_to_depths(*markets)
 
 		to_sell = {}
-		for symbol, volume
+		for symbol, volume in delta.items():
+			
+			if volume >= 0:
+				continue
+			if symbol == self.default_base_asset or symbol == self.backup_base_asset:
+				continue
 
-		await market_trade(to_sell)
+			for symbol2, volume2 in delta.items():
+				
+				if volume2 < 0 or symbol == symbol2:
+					continue
+				if symbol + symbol2 in self.market_filters:
+					if volume2 > -volume:
+						to_sell[symbol + symbol2] = volume
+						delta[symbol2] += volume
+						delta[symbol] = 0
+						break
+					else:
+						to_sell[symbol + symbol2] = volume2
+						delta[symbol2] = 0
+						delta[symbol] += volume2
 
 
+				elif symbol2 + symbol in self.market_filters:
+					if volume2 > -volume:
+						to_sell[symbol2 symbol] = volume
+						delta[symbol2] += volume
+						delta[symbol] = 0
+						break
+					else:
+						to_sell[symbol + symbol2] = volume2
+						delta[symbol2] = 0
+						delta[symbol] += volume2
 
+			else:
+				if symbol + self.default_base_asset in self.market_filters:
+					if symbol + self.default_base_asset in to_sell:
+						to_sell[symbol + self.default_base_asset] += volume
+						delta[symbol] = 0
+						delta[self.default_base_asset] += volume
+					else:
+						to_sell[symbol + self.default_base_asset] = volume
+						delta[symbol] = 0
+						delta[self.default_base_asset] += volume
+				elif self.default_base_asset + symbol in self.market_filters:
+					if symbol + self.default_base_asset in to_sell:
+						to_sell[self.default_base_asset + symbol] -= volume
+						delta[symbol] = 0
+						delta[self.default_base_asset] += volume
+					else:
+						to_sell[self.default_base_asset + symbol] = -volume
+						delta[symbol] = 0
+						delta[self.default_base_asset] += volume
 
+				elif symbol + self.backup_base_asset in self.market_filters:
+					if symbol + self.backup_base_asset in to_sell:
+						to_sell[symbol + self.backup_base_asset] += volume
+						delta[symbol] = 0
+						delta[self.backup_base_asset] += volume
+					else:
+						to_sell[symbol + self.backup_base_asset] = volume
+						delta[self.backup_base_asset] += volume
+						delta[symbol] = 0
+				elif self.backup_base_asset + symbol in self.market_filters:
+					if symbol + self.backup_base_asset in to_sell:
+						to_sell[self.backup_base_asset + symbol] -= volume
+						delta[symbol] = 0
+						delta[self.backup_base_asset] += volume
+					else:
+						to_sell[self.backup_base_asset + symbol] = -volume
+						delta[self.backup_base_asset] += volume
+						delta[symbol] = 0
+
+		#calculate absolute units to trade...
+
+		await self.market_trade(to_sell)
+
+		to_buy = {}
+
+		for symbol, volume in delta.items():
+			if volume > 0:
+				if symbol + self.default_base_asset in self.market_filters:
+					if delta[self.default_base_asset] < 0:
+						if -delta[self.default_base_asset] < volume:
+							to_buy[symbol + self.default_base_asset] = -delta[self.default_base_asset]
+							volume += delta[self.default_base_asset]
+							delta[self.default_base_asset] = 0
+						else:
+							to_buy[symbol + self.default_base_asset] = volume
+							delta[self.default_base_asset] += volume
+							volume = 0
+					elif delta[self.backup_base_asset] < 0:
+				elif self.default_base_asset + symbol in self.market_filters:
+						if -delta[self.default_base_asset] < volume:
+							to_buy[self.default_base_asset + symbol] = delta[self.default_base_asset]
+							volume += delta[self.default_base_asset]
+							delta[self.default_base_asset] = 0
+						else:
+							to_buy[self.default_base_asset + symbol] = volume
+							delta[self.default_base_asset] += volume
+							volume = 0
+				if symbol + self.backup_base_asset in self.market_filters:
+					if delta[self.backup_base_asset] < 0:
+						if -delta[self.backup_base_asset] < volume:
+							to_buy[symbol + self.backup_base_asset] = -delta[self.backup_base_asset]
+							volume += delta[self.backup_base_asset]
+							delta[self.backup_base_asset] = 0
+						else:
+							to_buy[symbol + self.backup_base_asset] = volume
+							delta[self.backup_base_asset] += volume
+							volume = 0
+					elif delta[self.backup_base_asset] < 0:
+				elif self.backup_base_asset + symbol in self.market_filters:
+						if -delta[self.backup_base_asset] < volume:
+							to_buy[self.backup_base_asset + symbol] = delta[self.backup_base_asset]
+							volume += delta[self.backup_base_asset]
+							delta[self.backup_base_asset] = 0
+						else:
+							to_buy[self.backup_base_asset + symbol] = volume
+							delta[self.backup_base_asset] += volume
+							volume = 0
+
+		await self.market_trade(to_buy)
 
 
 	#Trade Methods

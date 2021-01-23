@@ -17,7 +17,7 @@ async def main():
 	await acc.get_account_data()
 	print(acc.spot_balances)
 
-	await client.aclose()
+	await acc.close()
 
 if __name__ == '__main__':
 	asyncio.run(main())
