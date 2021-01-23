@@ -12,8 +12,7 @@ async def main():
 	acc = SpotAccount(keys.API, keys.SECRET)
 	await acc.get_account_data()
 
-	weighted_portfolio = await acc.weighted_portfolio(['USDT', 'BTC', 'ETH'])
-	print(weighted_portfolio)
+	await acc.trade_to_portfolio({'BTC': 0.3333333333333333, 'ETH': 0.3333333333333333, 'USDT': 0.3333333333333333})
 
 	await acc.close()
 	
