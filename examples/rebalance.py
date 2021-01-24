@@ -12,7 +12,7 @@ async def main():
 	acc = SpotAccount(keys.API, keys.SECRET)
 	await acc.get_account_data()
 
-	target_portfolio = {'BTC': 0.0, 'ETH': 0.0, 'USDT': 0.0, 'STEEM': 1.0, 'BNB':  0.0}
+	target_portfolio = {'BTC': 1/3, 'ETH': 1/3, 'USDT': 1/3, 'STEEM': 0, 'BNB':  0}
 
 
 	weighted = await acc.weighted_portfolio(target_portfolio)

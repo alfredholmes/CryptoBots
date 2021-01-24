@@ -139,6 +139,11 @@ class SpotAccount:
 		return {currency: value / total for currency, value in portfolio.items()}
 
 	async def trade_to_portfolio(self, target):
+		#normalise the target portfolio
+		total_size = sum(v for v in target.values())
+		target = {k: v / total_size for k, v in target.items()}
+
+		#get the current portfolio, including base assets for trading
 		current_portfolio = await self.weighted_portfolio(set([s.upper() for s in target] + [self.default_base_asset, self.backup_base_asset]))
 		#add default and backup portfolio weights if they are not in the target
 		if self.default_base_asset not in target:
@@ -149,11 +154,13 @@ class SpotAccount:
 			portfolio_value = sum(current_portfolio[k] for k in target)
 			target[self.backup_base_asset] = current_portfolio[self.backup_base_asset] * (portfolio_value + current_portfolio[self.backup_base_asset])
 
-		portfolio_value = sum(current_portfolio[k] for k in target)
+		portfolio_value = sum([current_portfolio[k] for k in target])
 		target = {k: v / portfolio_value for k, v in target.items()}
 
 
 		delta = {s.upper(): target[s] - current_portfolio[s.upper()] for s in target}
+
+
 		if self.default_base_asset not in delta:
 			delta[self.default_base_asset] = 0
 		if self.backup_base_asset not in delta:
@@ -195,10 +202,11 @@ class SpotAccount:
 						to_sell[(symbol, symbol2)] = volume
 						delta[symbol2] += volume
 						delta[symbol] = 0
+						volume = 0
 
 						break
 					else:
-						to_sell[(symbol, symbol2)] = volume2
+						to_sell[(symbol, symbol2)] = -volume2
 						delta[symbol2] = 0
 						delta[symbol] += volume2
 						volume += volume2
@@ -209,6 +217,7 @@ class SpotAccount:
 						to_sell[(symbol2, symbol)] = -volume
 						delta[symbol2] += volume
 						delta[symbol] = 0
+						volume = 0
 						break
 					else:
 						to_sell[(symbol2, symbol)] = volume2
@@ -259,9 +268,10 @@ class SpotAccount:
 
 		#calculate absolute units to trade...
 		to_sell = {k: v for k, v in to_sell.items() if v != 0}
+
 		trade = {(s[0],s[1]): (v / current_portfolio[s[0]]) * self.spot_balances[s[0]] if v < 0 else (v / current_portfolio[s[1]]) * self.spot_balances[s[1]] for s, v in to_sell.items()}
 		
-
+		#execute trades		
 		await self.market_trade(trade)
 
 		to_buy = {}
@@ -284,7 +294,7 @@ class SpotAccount:
 						volume += delta[self.default_base_asset]
 						delta[self.default_base_asset] = 0
 					else:
-						to_buy[(self.default_base_asset, symbol)] = volume
+						to_buy[(self.default_base_asset, symbol)] = -volume
 						delta[self.default_base_asset] += volume
 						volume = 0
 				if symbol + self.backup_base_asset in self.market_filters:
@@ -303,14 +313,18 @@ class SpotAccount:
 						volume += delta[self.backup_base_asset]
 						delta[self.backup_base_asset] = 0
 					else:
-						to_buy[(self.backup_base_asset, symbol)] = volume
+						to_buy[(self.backup_base_asset, symbol)] = -volume
 						delta[self.backup_base_asset] += volume
 						volume = 0
 
 
 		to_buy = {k: v for k, v in to_buy.items() if v != 0}
-		trade = {(s[0], s[1]): (v / current_portfolio[s[0]]) * self.spot_balances[s[0]] if v < 0 else (v / current_portfolio[s[1]]) * self.spot_balances[s[1]] for s, v in to_buy.items()}
+		
+		#refresh portfolio
+		current_portfolio = await self.weighted_portfolio(set([s.upper() for s in target] + [self.default_base_asset, self.backup_base_asset]))
 
+
+		trade = {(s[0], s[1]): (v / current_portfolio[s[0]]) * self.spot_balances[s[0]] if v < 0 else (v / current_portfolio[s[1]]) * self.spot_balances[s[1]] for s, v in to_buy.items()}
 
 		await self.market_trade(trade)
 
