@@ -67,6 +67,8 @@ class SpotAccount:
 		for symbol_data in self.exchange_data['symbols']:
 			
 			symbol = symbol_data['symbol']
+			if symbol_data['status'] != 'TRADING':
+				continue
 			self.market_filters[symbol] = {'precision': int(symbol_data['baseAssetPrecision']), 'precision_quote': int(symbol_data['quoteAssetPrecision'])}
 			for f in symbol_data['filters']:
 				if f['filterType'] == 'LOT_SIZE':
@@ -137,7 +139,20 @@ class SpotAccount:
 		return {currency: value / total for currency, value in portfolio.items()}
 
 	async def trade_to_portfolio(self, target):
-		current_portfolio = await self.weighted_portfolio([s.upper() for s in target])
+		current_portfolio = await self.weighted_portfolio(set([s.upper() for s in target] + [self.default_base_asset, self.backup_base_asset]))
+		#add default and backup portfolio weights if they are not in the target
+		if self.default_base_asset not in target:
+			portfolio_value = sum(current_portfolio[k] for k in target)
+			target[self.default_base_asset] = current_portfolio[self.default_base_asset] * (portfolio_value + current_portfolio[self.default_base_asset])
+		
+		if self.backup_base_asset not in target:
+			portfolio_value = sum(current_portfolio[k] for k in target)
+			target[self.backup_base_asset] = current_portfolio[self.backup_base_asset] * (portfolio_value + current_portfolio[self.backup_base_asset])
+
+		portfolio_value = sum(current_portfolio[k] for k in target)
+		target = {k: v / portfolio_value for k, v in target.items()}
+
+
 		delta = {s.upper(): target[s] - current_portfolio[s.upper()] for s in target}
 		if self.default_base_asset not in delta:
 			delta[self.default_base_asset] = 0
@@ -168,14 +183,14 @@ class SpotAccount:
 			
 			if volume >= 0:
 				continue
-			if symbol == self.default_base_asset or symbol == self.backup_base_asset:
-				continue
+
 
 			for symbol2, volume2 in delta.items():
 				
 				if volume2 < 0 or symbol == symbol2:
 					continue
 				if symbol + symbol2 in self.market_filters:
+
 					if volume2 > -volume:
 						to_sell[(symbol, symbol2)] = volume
 						delta[symbol2] += volume
@@ -191,7 +206,7 @@ class SpotAccount:
 
 				elif symbol2 + symbol in self.market_filters:
 					if volume2 > -volume:
-						to_sell[(symbol2, symbol)] = volume
+						to_sell[(symbol2, symbol)] = -volume
 						delta[symbol2] += volume
 						delta[symbol] = 0
 						break
@@ -202,6 +217,7 @@ class SpotAccount:
 						volume += volume2
 
 			else:
+				#still some volume left over - send to default base asset or backup
 				if symbol + self.default_base_asset in self.market_filters:
 					if symbol + self.default_base_asset in to_sell:
 						to_sell[(symbol, self.default_base_asset)] += volume
@@ -222,6 +238,7 @@ class SpotAccount:
 						delta[self.default_base_asset] += volume
 
 				elif symbol + self.backup_base_asset in self.market_filters:
+
 					if (symbol, self.backup_base_asset) in to_sell:
 						to_sell[(symbol, self.backup_base_asset)] += volume
 						delta[symbol] = 0
@@ -241,8 +258,9 @@ class SpotAccount:
 						delta[symbol] = 0
 
 		#calculate absolute units to trade...
-		print(to_sell)
-		trade = {s[0] + s[1]: -v / current_portfolio[s[0]] * self.spot_balances[s[0]] if v < 0 else v / current_portfolio[s[1]] * self.spot_balances[s[1]] for s, v in to_sell.items()}
+		to_sell = {k: v for k, v in to_sell.items() if v != 0}
+		trade = {(s[0],s[1]): (v / current_portfolio[s[0]]) * self.spot_balances[s[0]] if v < 0 else (v / current_portfolio[s[1]]) * self.spot_balances[s[1]] for s, v in to_sell.items()}
+		
 
 		await self.market_trade(trade)
 
@@ -289,7 +307,9 @@ class SpotAccount:
 						delta[self.backup_base_asset] += volume
 						volume = 0
 
-		trade = {s[0] + s[1]: -v / current_portfolio[s[0]] * self.spot_balances[s[0]] if v < 0 else v / current_portfolio[s[1]] * self.spot_balances[s[1]] for s, v in to_buy.items()}
+
+		to_buy = {k: v for k, v in to_buy.items() if v != 0}
+		trade = {(s[0], s[1]): (v / current_portfolio[s[0]]) * self.spot_balances[s[0]] if v < 0 else (v / current_portfolio[s[1]]) * self.spot_balances[s[1]] for s, v in to_buy.items()}
 
 
 		await self.market_trade(trade)
@@ -298,30 +318,154 @@ class SpotAccount:
 	#Trade Methods
 	#main trade function, takes a dict with markets and trade volumes
 	async def market_trade(self, trades):
-		for market, quantity in trades.items():
-			print(market, quantity)
+		tasks = []
+		for (asset, quote), quantity in trades.items():
+			if quantity < 0:
+				tasks.append(self.market_sell(asset, quote, -quantity))
+			elif quantity > 0:
+				tasks.append(self.market_buy(asset, quote, quantity))
+		#perform orders in parallel
+		await asyncio.gather(*tasks)
 
-		print()
 
-
-	#buy volume worth of to_buy with to_sell
+	#buy volume of to_buy with to_sell
 	async def limit_buy(self, to_buy, to_sell, volume):
 		pass
 
 	
-	async def market_buy(self, market, volume, quote_volume = True):
+	#sell volume worth of to_sell to to_buy
+	async def limit_sell(self, to_sell, to_buy, volume):
+		pass
+
+	#spend quote_volume of quote buying asset at the market price
+	async def market_buy(self, asset, quote, quote_volume):
+		if len(self.market_filters) == 0:
+			await self.get_account_data()
+		market = asset + quote
+		#binance api call params
 		params = {
 					'symbol': market,
 					'type': 'MARKET',
 					'side': 'BUY'
 		}
 
-	#sell volume worth of to_sell to to_buy
-	async def limit_sell(self, to_sell, to_buy, volume):
-		pass
+		if market not in self.market_filters:
+			print('Invalid market, cannot trade ', market)
+			if quote + asset in self.market_filters:
+				print(quote + asset, "is valid, switching")
+				await self.market_sell(quote, asset, volume)
+			return
 
-	async def market_sell(self, market, volume, quote_volume = False):
-		pass
+		if quote_volume > self.spot_balances[quote]:
+			print('Overspend: Trying to sell ', quote_volume, 'of ', quote, 'when balance is ', self.spot_balances[quote])
+			print('\t Reducing volume of transaction')
+			quote_volume = self.spot_balances[quote]
+
+	
+		precision = self.market_filters[market]['precision_quote']
+		form = "{:." + str(precision) + "f}"
+		min_notional = self.market_filters[market]['min_order_quote']
+
+		if quote_volume < min_notional:
+			print('Quote volume', quote_volume, 'below min notional amount of', min_notional)
+			return
+
+		params['quoteOrderQty'] = form.format(quote_volume)
+
+		headers = {'X-MBX-APIKEY': self.api_key}
+		self.sign_params(params)
+		r = await self.httpx_client.post(self.endpoint + 'order', headers=headers, params=params)
+		result = json.loads(r.text)
+		#update
+		if 'status' in result and result['status'] == 'FILLED':
+			for fill in result['fills']:
+				if asset not in self.spot_balances:
+					self.spot_balances[asset] = 0
+				self.spot_balances[asset] += float(fill['qty'])
+				self.spot_balances[fill['commissionAsset']] -= float(fill['commission'])
+				self.spot_balances[quote] -= float(fill['qty']) * float(fill['price'])
+		else:
+			print(asset, quote, result)
+
+
+
+
+
+
+	#sell volume of asset to get quote at the market price
+	async def market_sell(self, asset, quote, volume):
+		if len(self.market_filters) == 0:
+			await self.get_account_data()
+		market = asset + quote
+
+		#binance api call params
+		params = {
+					'symbol': market,
+					'type': 'MARKET',
+					'side': 'SELL'
+		}
+
+		if market not in self.market_filters:
+			print('Invalid market, cannot trade ', market)
+			if quote + asset in self.market_filters:
+				print(quote + asset, "is valid, switching")
+				await self.market_buy(quote, asset, volume)
+			return
+		#market is valid, continue to check the order
+		#check to see if we are listening to the orderbook (required for market filters)
+		if (asset + quote).lower() not in self.orderbook_manager.books:
+			await self.orderbook_manager.subscribe_to_depth((asset + quote).lower())
+
+		if volume > self.spot_balances[asset]:
+			print('Overspend: Trying to sell ', volume, 'of ', asset, 'when balance is ', self.spot_balances[asset])
+			print('\t Reducing volume of transaction')
+			volume = self.spot_balances[asset]
+
+
+		precision = self.market_filters[market]['precision']
+		form = "{:." + str(precision) + "f}"
+		min_notional = self.market_filters[market]['min_order_quote']
+		step_size = self.market_filters[market]['step_size']
+		min_asset = self.market_filters[market]['min_order']
+		max_asset = self.market_filters[market]['max_order']
+
+		if volume * self.orderbook_manager.books[(asset + quote).lower()].market_sell_price(volume) < min_notional:
+			print('Volume', volume, 'totaling', volume * self.orderbook_manager.books[(asset + quote).lower()].market_sell_price(volume) ,'below min notional amount of', min_notional)
+			return
+
+		
+
+		if volume > max_asset:
+			print('Sell order of', volume, asset, 'above minimum order, reducing')
+			volume = max_asset
+
+		#sort out the step size...
+		stepped_volume = int(volume / step_size) * step_size
+
+		if stepped_volume < min_asset:
+			print('Sell order of ', volume, asset, 'below minimum order once stepped to', stepped_volume)
+			return
+
+
+		params['quantity'] = form.format(stepped_volume)
+
+		headers = {'X-MBX-APIKEY': self.api_key}
+		self.sign_params(params)
+		r = await self.httpx_client.post(self.endpoint + 'order', headers=headers, params=params)
+		result = json.loads(r.text)
+
+		#update
+		if 'status' in result and result['status'] == 'FILLED':
+			for fill in result['fills']:
+				if quote not in self.spot_balances:
+					self.spot_balances[asset] = 0
+				self.spot_balances[asset] -= float(fill['qty'])
+				self.spot_balances[fill['commissionAsset']] -= float(fill['commission'])
+				self.spot_balances[quote] += float(fill['qty']) * float(fill['price'])
+		else:
+			print(r.text)
+			
+
 
 	async def get_account_balance(self):
 		params = self.sign_params()
@@ -339,7 +483,6 @@ class SpotAccount:
 		params['signature'] = self.generate_signature(params)
 
 		return params
-
 
 	def generate_signature(self, params):
 		return hmac.new(self.secret_key.encode('utf-8'), urllib.parse.urlencode(params).encode('utf-8'), hashlib.sha256).hexdigest()		

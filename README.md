@@ -86,6 +86,64 @@ and running this gives the following output
 	{'USDT': 1.0, 'BTC': 0.0, 'ETH': 0.0}
 
 
-4. Next we'll construct a target portfolio and get the account to trade into that portfolio using the `SpotAccount.trade_to_portfolio`function
+4. Next we'll construct a target portfolio and get the account to trade into that portfolio using the `SpotAccount.trade_to_portfolio`function, altering the main function to
+
+```python
+async def main():
+	acc = SpotAccount(keys.API, keys.SECRET)
+	await acc.get_account_data()
+
+
+	await acc.trade_to_portfolio({'BTC': 0.3333333333333333, 'ETH': 0.3333333333333333, 'USDT': 0.3333333333333333})
+
+	weighted = await acc.weighted_portfolio()
+	print(weighted)
+
+	await acc.close()
+```
+and running gives
+
+	$ python3 examples/rebalance.py
+	{'BTC': 0.33337537473449314, 'ETH': 0.3330803484495062, 'USDT': 0.3335442768160007}
+so the portfolio has been altered.
+
+5. Now we have got the trading working, all that is left to do is to check whether or not to balance the portfolio when the program is run. If we don't add this in, then whenever the program runs it will attempt to balance the portfolio, but it is likely that the trades will be below the minimum (around $10) trade volume allowed by Binance and so won't be executed. With small account balances, this may also be true even with the minimum threshold.
+
+We'll make a final change to the main function
+
+```python
+async def main():
+	acc = SpotAccount(keys.API, keys.SECRET)
+	await acc.get_account_data()
+
+	target_portfolio = {'BTC': 0.3333333333333333, 'ETH': 0.3333333333333333, 'USDT': 0.3333333333333333}
+
+
+	weighted = await acc.weighted_portfolio(target_portfolio)
+	print('Initial portfolio: ', weighted)
+
+	diff = sum([abs(target_portfolio[s] - weighted[s]) for s in target_portfolio])
+
+	if diff > 0.1:
+		print('Performing rebalance')
+		await acc.trade_to_portfolio(target_portfolio)
+	else:
+		print('Portfolio difference of ', diff, 'too low to trade')
+	
+
+	weighted = await acc.weighted_portfolio()
+	print('Final portfolio: ', weighted)
+
+	await acc.close()
+```
+and so running gives
+
+	$ python3 examples/rebalance.py
+	Current portfolio:  {'ETH': 0.3341554385631097, 'USDT': 0.33259670426848686, 'BTC': 0.3332478571684033}
+	Portfolio difference of  0.0016442104595528195 too low to trade
+	{'BTC': 0.3332478571684033, 'ETH': 0.3341554385631097, 'USDT': 0.33259670426848686}
+
+
+
 ### Example Trading Bot - Third party trading logic!
 
