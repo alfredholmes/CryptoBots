@@ -1,7 +1,6 @@
 import sys
 sys.path.append("./")
 import keys
-from binancebots.orderbooks import OrderBookManager
 from binancebots.accounts import SpotAccount
 
 

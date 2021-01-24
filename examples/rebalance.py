@@ -1,7 +1,6 @@
 import sys
 sys.path.append("./")
 import keys
-from binancebots.orderbooks import OrderBookManager
 from binancebots.accounts import SpotAccount
 
 import asyncio
@@ -9,15 +8,19 @@ import asyncio
 
 
 async def main():
+	#create SpotAccount object to manage the account
 	acc = SpotAccount(keys.API, keys.SECRET)
-	await acc.get_account_data()
+	
 
+	#Create a portfolio dict, values don't need to add up to 1 and any currencies not included in the dictionary will not be traded 
 	target_portfolio = {'BTC': 1/3, 'ETH': 1/3, 'USDT': 1/3, 'STEEM': 0, 'BNB':  0}
 
-
+	#this gets the weighted portfolio of the binance account
 	weighted = await acc.weighted_portfolio(target_portfolio)
 	print('Initial portfolio: ', weighted)
 
+
+	#logic to decide whether or not to trade; if 10% of the funds are in the wrong place
 	diff = sum([abs(target_portfolio[s] - weighted[s]) for s in target_portfolio])
 
 	if diff > 0.1:
@@ -26,7 +29,7 @@ async def main():
 	else:
 		print('Portfolio difference of ', diff, 'too low to trade')
 	
-
+	#once complete, print out the new portfolio
 	weighted = await acc.weighted_portfolio()
 	print('Final portfolio: ', weighted)
 
