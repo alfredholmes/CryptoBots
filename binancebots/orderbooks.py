@@ -24,7 +24,7 @@ class OrderBook:
 		
 		#check to see if the update has been applied already
 		if new_data['u'] < self.last_id:
-			print('New data is not new!')
+			#print('New data is not new!')
 			return
 		#apply update
 		#todo check the update ids are valid
@@ -154,7 +154,7 @@ class OrderBookManager:
 				symbol = message['stream'].split('@')[0]
 				self.books[symbol].update(message['data'])
 			else:
-				print(message)
+				print('Unandled WSS message: ', message)
 
 			self.q.task_done()
 
