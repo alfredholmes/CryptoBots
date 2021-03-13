@@ -13,7 +13,7 @@ async def main():
 	
 
 	#Create a portfolio dict, values don't need to add up to 1 and any currencies not included in the dictionary will not be traded 
-	target_portfolio = {'BTC': 1/3, 'ETH': 1/3, 'USDT': 1/3, 'STEEM': 0, 'BNB':  0}
+	target_portfolio = {'BTC': 0/3, 'ETH': 0/3, 'USDT': 0/3, 'STEEM': 0, 'BNB':  3/3}
 
 	#this gets the weighted portfolio of the binance account
 	weighted = await acc.weighted_portfolio(target_portfolio)
