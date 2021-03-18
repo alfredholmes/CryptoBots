@@ -1,4 +1,4 @@
-# Binance Bots
+# Binance Bot Framework
 Asynchronous Bot Framework for Binance Cryptocurrency Exchange. As the Binance APIs are quite simple, the framework interfaces with these directly to remain lightweight and avoid security issues.
 
 
@@ -39,7 +39,7 @@ to get the live spot data for the account.
 ### Example Trading Bot - Automatic portfolio balancing
 This is an example of how to set up automatic spot account balancing with the BinanceBot framework. In this guide we set up a simple script that connects to the binance websockets API to track the prices of various currencies and trades when the portfolio is sufficiently different from the target portfolio. The final script can be found at `examples/rebalance.py`
 
-1. Import the required files - in this script we will use the `OrderBookManager` and `SpotAccount` classes also make sure you've set up the `keys.py` file as described above. We import `sys` so that the script can be saved in the `examples` folder and executed from the root of the cloned repository. We'll also need `asyncio` to manage the asynchronous tasks. So we'll add the following to `examples/rebalance.py`
+1. Import the required files - in this script we will use the `OrderBookManager` and `SpotAccount` classes also make sure you've set up the `keys.py` file as described above. We import `sys` so that the script can be saved in the `examples` folder and executed from the root of the cloned repository. We'll also need `asyncio` to manage the asynchronous tasks. So we'll add the following to `examples/rebalance_tutorial.py`
 
 ```python
 import sys
@@ -65,7 +65,7 @@ if __name__ == '__main__':
 ```
 if we run the script you will see a print out of your spot account balance. `SpotAccount` does not track 0 balances so if you have not deposited to Binance you will get an empty dictionary. The function `SpotAccount.get_account_data` pulls the available spot market meta-data from the Binance API and gets the current account information, which contains the account balances.
 
-	$ python3 examples/rebalance.py
+	$ python3 examples/rebalance_tutorial.py
 	{'USDT': 120.30743}
   
 3. Now we'll call the `SpotAccount.weighted_portfolio` function to get the relative values of the portfolio and decide if the portfolio is far enough away from the desired portfolio to bother rebalancing: we'll say that a portfolio needs rebalancing if at least 10% of the portfolio is in the wrong asset. Before calling the `SpotAccount.weighted_portfolio` we need to use the websocket API to listen to the relevant orderbooks so that the bot can access real time market data. The new main function looks like this.
@@ -82,7 +82,7 @@ async def main():
 ```
 and running this gives the following output
 
-	$ python3 examples/rebalance.py
+	$ python3 examples/rebalance_tutorial.py
 	{'USDT': 1.0, 'BTC': 0.0, 'ETH': 0.0}
 
 
@@ -103,7 +103,7 @@ async def main():
 ```
 and running gives
 
-	$ python3 examples/rebalance.py
+	$ python3 examples/rebalance_tutorial.py
 	{'BTC': 0.33337537473449314, 'ETH': 0.3330803484495062, 'USDT': 0.3335442768160007}
 so the portfolio has been altered.
 
@@ -145,5 +145,6 @@ and so running gives
 
 
 
-### Example Trading Bot - Third party trading logic!
+### Example Trading Bot - Third party trading logic
+(Todo)
 
