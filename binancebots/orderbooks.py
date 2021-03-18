@@ -143,9 +143,7 @@ class OrderBookManager:
 		r = await self.http_client.get('https://api.binance.com/api/v3/depth', params=params)
 
 		response = json.loads(r.text)
-
 		self.books[symbol] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
-		
 	async def parse(self):
 	
 		while  True:

@@ -10,17 +10,22 @@ import asyncio
 
 
 async def main(symbols):
-	print(symbols)
 	manager = OrderBookManager()
 	await manager.connect()
 	
-	await manager.subscribe_to_depths('btcusdt', 'ethusdt')
-	asyncio.create_task(manager.parse())
+	await manager.subscribe_to_depths(*symbols)
+	parsing_task = asyncio.create_task(manager.parse())
 	while True:
-		for s in symbols:
-			print(s, 'market buy price:', manager.books[s].market_buy_price(), 'market sell price', manager.books[s].market_sell_price())
-		await asyncio.sleep(10)
+		try:
+			for s in symbols:
+				print(s, 'market buy price:', manager.books[s].market_buy_price(), 'market sell price', manager.books[s].market_sell_price())
+			await asyncio.sleep(1)
+		except:
+			print('Exception!')
+			break
 
+	parsing_task.cancel()
+	await manager.close_connection()
 if __name__ == '__main__':
 	import sys
 
