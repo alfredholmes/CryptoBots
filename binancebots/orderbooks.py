@@ -15,8 +15,7 @@ class OrderBook:
 
 		self.asks = {float(ask[0]): float(ask[1]) for ask in initial['asks']}
 
-
-
+		self.trades = []
 
 
 	#parse updates
@@ -24,10 +23,9 @@ class OrderBook:
 		
 		#check to see if the update has been applied already
 		if new_data['u'] < self.last_id:
-			#print('New data is not new!')
 			return
-		#apply update
-		#todo check the update ids are valid
+		
+
 		for bid in new_data['b']:
 
 			price, quantity = float(bid[0]), float(bid[1])
@@ -38,13 +36,16 @@ class OrderBook:
 				self.bids[price] = quantity
 
 		for ask in new_data['a']:
+			
 			price, quantity = float(ask[0]), float(ask[1])
 			if quantity == 0:
 				self.asks.pop(price, None)
 			else:
 				self.asks[price] = quantity
 
+		
 
+		self.trades = []
 
 
 	def market_buy_price(self, volume = 0):
@@ -91,10 +92,49 @@ class OrderBook:
 		return recived / volume
 
 
+class TradeStream:
+	def __init__(self, initial_id):
+		self.trades = []
+		self.initial_id = initial_id
+		#dicts to saves the differences between the 100ms orderbook and the current orderbook in the same format as the binance updates
+		self.bid_modifyer = {}
+		self.ask_modifyer = {}
+
+
+	def add_trade(self, orderbook, trade_id, timestamp, side, price, volume):
+		if self.initial_id > trade_id:
+			return
+
+		self.trades.append((trade_id, timestamp, side, price, volume))
+
+		#side is True if buyer is the market maker (market sell order was executed) and false otherwise
+		if side:
+			if price in self.bid_modifyer:
+				self.bid_modifyer[price] -= volume
+			elif price in orderbook.bids:
+				self.bid_modifyer[price] = orderbook.bids[price] - volume
+			else:
+				self.bid_modifyer[price] = -volume
+		else:
+			if price in self.ask_modifyer:
+				self.ask_modifyer[price] -= volume
+			elif price in orderbook.asks:
+				self.ask_modifyer[price] = orderbook.asks[price] - volume
+			else:
+				self.bid_modifyer[price] = -volume
+
+	def clear(self):
+		self.trades = []
+		self.bid_modifyer = {}
+		self.ask_modifyer = {}
+
+
 class OrderBookManager:
 	def __init__(self):
 		self.initialized = False
-	async def connect(self, uri="wss://stream.binance.com:9443/stream"):
+	
+
+	async def connect(self, listen_to_trades=False, uri="wss://stream.binance.com:9443/stream"):
 		self.client = await websockets.client.connect(uri, ssl=True)
 		self.id = 0
 		#automatically parse messages as they arrive
@@ -103,13 +143,16 @@ class OrderBookManager:
 		self.http_client = httpx.AsyncClient()
 
 		self.books = {}
+		self.trades = {}
 		self.to_parse = []
 
 		self.requests = {}
 
 		self.initialized = True
-		self.subscriptions = set()
-
+		self.websocket_parser = asyncio.create_task(self.parse())
+		self.tradestreams = {}
+		self.listen_to_trades=listen_to_trades
+		self.trade_q = asyncio.Queue()
 
 	async def subscribe_to_depths(self, *symbols):
 		if not self.initialized:
@@ -131,9 +174,8 @@ class OrderBookManager:
 		}
 
 
-		self.requests[self.id] = {'data': data, 'response': 'response not yet recived'}
+		self.requests[self.id] = {'data': data, 'response': None}
 		await self.client.send(json.dumps(data))
-		self.subscriptions.add(symbol)
 		#get depth the snapshot
 		params = {
 			'symbol': symbol.upper(),
@@ -144,18 +186,53 @@ class OrderBookManager:
 
 		response = json.loads(r.text)
 		self.books[symbol] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
-	async def parse(self):
+
+		if self.listen_to_trades:
+			await self.subscribe_to_trade(symbol)
 	
+
+
+	async def subscribe_to_trade(self, symbol):
+		if symbol not in self.books:
+			await self.subscribe_to_depth(symbol)
+		if symbol in self.trades:
+			return
+		self.id += 1
+		data = {
+			"method": "SUBSCRIBE",
+			"params": [symbol + '@trade'],
+			"id": self.id
+		}
+
+		self.requests[self.id] = {'data': data, 'response': None}
+		await self.client.send(json.dumps(data))
+		self.tradestreams[symbol] = TradeStream(self.books[symbol].last_id)
+
+
+	async def parse(self):
 		while  True:
-			message = await self.q.get()
-			if 'stream' in message:
-				symbol = message['stream'].split('@')[0]
-				self.books[symbol].update(message['data'])
-			else:
-				print('Unandled WSS message: ', message)
+			try:
+				message = await self.q.get()
+				if 'stream' in message and 'depth' in message['stream']:
+					symbol = message['stream'].split('@')[0]
+					self.books[symbol].update(message['data'])
+					if symbol in self.tradestreams:
+						if self.listen_to_trades:
+							await self.trade_q.put((symbol, dict(self.books[symbol].asks), dict(self.tradestreams[symbol].ask_modifyer), dict(self.books[symbol].bids), dict(self.tradestreams[symbol].bid_modifyer)))
 
-			self.q.task_done()
+						self.tradestreams[symbol].clear()
+				elif 'stream' in message and 'trade' in message['stream']:
+					symbol = message['stream'].split('@')[0]
+					self.tradestreams[symbol].add_trade(self.books[symbol], message['data']['E'], message['data']['t'], message['data']['m'], float(message['data']['p']), float(message['data']['q']))
+				elif 'result' in message and message['result'] is None:
+					self.requests[int(message['id'])] = True
+				else:
+					print('Unandled WSS message: ', message)
 
+				self.q.task_done()
+			except KeyError as e:
+				#TODO: Better error handling
+				print('Key error: ', e)
 
 	async def unsubscribe_to_depth(self, symbol):
 		self.id += 1
@@ -165,12 +242,23 @@ class OrderBookManager:
 			"id": self.id 
 		}
 
-		self.requests[self.id] = {'data': data, 'response': 'response not yet recived'}
+		self.requests[self.id] = {'data': data, 'response': None} 
 
-		self.subscriptions.remove(symbol)
-		del self.books[symbol]
 		await self.client.send(json.dumps(data))
 		del self.books[symbol]
+
+	async def unsubscribe_to_trade(self, symbol):
+		self.id += 1
+		data = {
+			"method": "UNSUBSCRIBE",
+			"params": [symbol + '@trade'],
+			"id": self.id
+		}
+
+		self.requests[self.id] = {'data': data, 'response': None}
+
+		await self.client.send(json.dumps(data))	
+		del self.tradestreams[symbol]
 
 
 	async def listen(self):
@@ -179,10 +267,11 @@ class OrderBookManager:
 	
 
 	async def close_connection(self):
-		if self.initialized:
-			self.socket_listener.cancel()
+		if self.initialized:	
 			await self.http_client.aclose()
 			await self.client.close()
+			self.socket_listener.cancel()
+			self.websocket_parser.cancel()
 
 
 
@@ -209,7 +298,6 @@ async def main():
 	print('done')
 	
 	#wait 1 second just to allow streams to start
-	asyncio.create_task(manager.parse())
 	await asyncio.sleep(2)
 
 	while True:
@@ -222,8 +310,6 @@ async def main():
 		
 
 
-	#get the price to buy 1 btc on a market trade
-	#print(manager.get_market_buy_price('btcusdt', 1))
 
 
 	await manager.close_connection()		
