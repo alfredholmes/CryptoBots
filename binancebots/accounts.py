@@ -99,10 +99,10 @@ class SpotAccount:
 		untracked = []
 		for currency in self.spot_balances:
 			if currency + base in self.market_filters:
-				if (currency + base).lower() not in self.orderbook_manager.subscriptions:
+				if (currency + base).lower() not in self.orderbook_manager.books:
 					untracked.append((currency + base).lower())
 			elif base + currency in self.market_filters:
-				if (base + currency).lower() not in self.orderbook_manager.subscriptions:
+				if (base + currency).lower() not in self.orderbook_manager.books:
 					untracked.append((base + currency).lower())
 
 		await self.track_orderbooks(*(symbol for symbol in untracked))
