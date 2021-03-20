@@ -84,18 +84,19 @@ async def main(symbols):
 				orders.append([symbol, 'MARKET_BUY', trade[0], trade[3], trade[4]])
 			
 
-		if len(orders) > 100:
+		if len(orders) > 1000:
+			print('Unsaved orders of length 1000, saving...')
 			#print(orders)
 			with open(FILE, 'a') as csvfile:
 				writer = csv.writer(csvfile)
 				for order in orders:
 					writer.writerow(order)
+			print('Done')
+			print('Unprocessed orders in queue: ', manager.trade_q.qsize())
 					
 			orders = []
 		
 		manager.trade_q.task_done()
-		await asyncio.sleep(0.05)
-		print(manager.trade_q.qsize())
 
 	await manager.close_connection()
 
