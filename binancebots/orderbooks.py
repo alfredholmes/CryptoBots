@@ -105,7 +105,7 @@ class TradeStream:
 		if self.initial_id > trade_id:
 			return
 
-		self.trades.append((trade_id, timestamp, side, price, volume))
+		self.trades.append([trade_id, timestamp, side, price, volume])
 
 		#side is True if buyer is the market maker (market sell order was executed) and false otherwise
 		if side:
@@ -218,7 +218,7 @@ class OrderBookManager:
 					self.books[symbol].update(message['data'])
 					if symbol in self.tradestreams:
 						if self.listen_to_trades:
-							await self.trade_q.put((symbol, dict(self.books[symbol].asks), dict(self.tradestreams[symbol].ask_modifyer), dict(self.books[symbol].bids), dict(self.tradestreams[symbol].bid_modifyer)))
+							await self.trade_q.put((symbol, message['data'], self.tradestreams[symbol].trades[:], dict(self.tradestreams[symbol].ask_modifyer), dict(self.tradestreams[symbol].bid_modifyer)))
 
 						self.tradestreams[symbol].clear()
 				elif 'stream' in message and 'trade' in message['stream']:
@@ -291,7 +291,7 @@ async def main():
 
 	manager = OrderBookManager()
 
-	await manager.connect()
+	await manager.connect(True)
 	
 	print('Subscribing to btcusdt')
 	await manager.subscribe_to_depth('btcusdt')
@@ -304,7 +304,6 @@ async def main():
 
 		print(manager.books['btcusdt'].market_buy_price(0))
 		print(manager.books['btcusdt'].market_sell_price(0))
-		print()
 		await asyncio.sleep(0.1)
 
 		
