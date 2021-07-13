@@ -145,6 +145,7 @@ class OrderBookManager:
 		self.books = {}
 		self.trades = {}
 		self.to_parse = []
+		self.unhandled_book_updates = {}
 
 		self.requests = {}
 
@@ -159,6 +160,8 @@ class OrderBookManager:
 			await self.connect()
 		
 		to_subscribe = [s for s in symbols if s not in self.books]
+		for s in to_subscribe:
+			self.unhandled_book_updates[s] = []
 
 		#subscribe
 		self.id += 1
@@ -173,6 +176,11 @@ class OrderBookManager:
 		await self.client.send(json.dumps(data))
 
 		await self.get_depth_snapshots(*to_subscribe)
+		
+		for s in to_subscribe:
+			for update in self.unhandled_book_updates[s]:
+				self.books.update(update)
+			del self.unhandled_book_updates[s]
 
 	async def get_depth_snapshots(self, *symbols):
 		
@@ -181,7 +189,6 @@ class OrderBookManager:
 				'symbol': symbol.upper(),
 				'limit': 1000
 			}
-
 			
 			r = await self.http_client.get('https://api.binance.com/api/v3/depth', params=params)
 
@@ -190,38 +197,7 @@ class OrderBookManager:
 
 
 			if self.listen_to_trades:
-				await self.subscribe_to_trade(symbol)
-
-	async def subscribe_to_depth(self, symbol):
-		
-		#subscribe to the websocket stream
-		if symbol in self.books:
-			#already subscribed
-			return
-		self.id += 1
-		data = {
-			"method": "SUBSCRIBE",
-			"params": [symbol + '@depth@100ms'],
-			"id": self.id 
-		}
-
-
-		self.requests[self.id] = {'data': data, 'response': None}
-		await self.client.send(json.dumps(data))
-		#get depth the snapshot
-		params = {
-			'symbol': symbol.upper(),
-			'limit': 1000
-		}
-
-		r = await self.http_client.get('https://api.binance.com/api/v3/depth', params=params)
-
-		response = json.loads(r.text)
-		self.books[symbol] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
-
-		if self.listen_to_trades:
-			await self.subscribe_to_trade(symbol)
-	
+				await self.subscribe_to_trade(symbol)	
 
 
 	async def subscribe_to_trade(self, symbol):
@@ -247,6 +223,9 @@ class OrderBookManager:
 				message = await self.q.get()
 				if 'stream' in message and 'depth' in message['stream']:
 					symbol = message['stream'].split('@')[0]
+					if symbol not in self.books:
+						self.unhandled_book_updates[symbol].append(message['data'])
+						continue
 					self.books[symbol].update(message['data'])
 					if symbol in self.tradestreams:
 						if self.listen_to_trades:

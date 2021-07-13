@@ -24,7 +24,7 @@ async def main():
 	
 
 	await manager.connect(True)
-	await manager.subscribe_to_depth('btcusdt')
+	await manager.subscribe_to_depths('btcusdt')
 
 	orders = []
 

@@ -24,7 +24,7 @@ async def main():
 	target_portfolio['BUSD'] = 0
 	print('Attempting to trade to ', target_portfolio)
 
-	await acc.trade_to_portfolio(target_portfolio)
+	#await acc.trade_to_portfolio(target_portfolio)
 	
 	weighted = await acc.weighted_portfolio()
 	print('Final portfolio: ', weighted)
