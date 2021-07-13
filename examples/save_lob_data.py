@@ -10,27 +10,21 @@
 # Each order (aggregated trade) has 5 properties:
 # Pair, Type, Timestamp, Price, Volume
 
-
 import sys
-
 sys.path.append("./")
-import keys
-from binancebots.orderbooks import OrderBookManager
-
-import httpx
 import asyncio
-
+from binancebots.orderbooks import OrderBookManager
 import csv
 
 
 FILE = 'btcusdt_trades.csv'
 
-async def main(symbols):
+async def main():
 	manager = OrderBookManager()
 	
 
 	await manager.connect(True)
-	await manager.subscribe_to_trade('btcusdt')
+	await manager.subscribe_to_depth('btcusdt')
 
 	orders = []
 
@@ -102,6 +96,5 @@ async def main(symbols):
 
 
 if __name__ == '__main__':
-	import sys
 
-	asyncio.run(main(sys.argv[1:]))
+	asyncio.run(main())

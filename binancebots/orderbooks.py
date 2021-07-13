@@ -157,8 +157,40 @@ class OrderBookManager:
 	async def subscribe_to_depths(self, *symbols):
 		if not self.initialized:
 			await self.connect()
+		
+		to_subscribe = [s for s in symbols if s not in self.books]
 
-		await asyncio.gather(*(self.subscribe_to_depth(symbol) for symbol in symbols))
+		#subscribe
+		self.id += 1
+
+		data = {
+			"method": "SUBSCRIBE",
+			"params": [s + '@depth@100ms' for s in to_subscribe],
+			"id": self.id
+		}
+
+		self.requests[self.id] = {'data': data, 'response': None}
+		await self.client.send(json.dumps(data))
+
+		await self.get_depth_snapshots(*to_subscribe)
+
+	async def get_depth_snapshots(self, *symbols):
+		
+		for symbol in symbols:
+			params = {
+				'symbol': symbol.upper(),
+				'limit': 1000
+			}
+
+			
+			r = await self.http_client.get('https://api.binance.com/api/v3/depth', params=params)
+
+			response = json.loads(r.text)
+			self.books[symbol] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
+
+
+			if self.listen_to_trades:
+				await self.subscribe_to_trade(symbol)
 
 	async def subscribe_to_depth(self, symbol):
 		
@@ -227,7 +259,7 @@ class OrderBookManager:
 				elif 'result' in message and message['result'] is None:
 					self.requests[int(message['id'])] = True
 				else:
-					print('Unandled WSS message: ', message)
+					print('Unandled WSS message: ', message, ' | Request: ', self.requests[message['id']])
 
 				self.q.task_done()
 			except KeyError as e:
