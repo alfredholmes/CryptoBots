@@ -12,6 +12,7 @@ Asynchronous Bot Framework for Binance Cryptocurrency Exchange. As the Binance A
 - Simple custom trading logic extensions
 - Listen to aggregated trade streams to get more up to date order book information
 - Interaction with flexible savings 
+- Use linear programming to work out optimal trading routes
 
 ### Running
 	$ git clone https://github.com/alfredholmes/BinanceBots

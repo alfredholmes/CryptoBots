@@ -84,7 +84,7 @@ class SpotAccount:
 
 
 	async def weighted_portfolio(self, symbols=None, base='BTC'):
-		#currently assyming everything has a btc market
+		#currently assuming everything has a btc market
 		#if the symbols is None then we will just get the whole portfolio
 		#get account data if we need to
 		if self.spot_balances is None:
@@ -488,6 +488,7 @@ class SpotAccount:
 		response = await self.httpx_client.get(self.endpoint + 'account', headers=headers, params=params)
 		account = json.loads(response.text)
 
+		print(account)
 		self.spot_balances = {asset['asset']: float(asset['free']) + float(asset['locked']) for asset in account['balances'] if float(asset['free']) != 0}
 
 
