@@ -10,7 +10,7 @@ import asyncio
 
 async def main(symbols):
 	manager = OrderBookManager()
-	await manager.connect()
+	await manager.connect(False, 'wss://fstream.binance.com/stream')
 	
 	await manager.subscribe_to_depths(*symbols)
 	while True:

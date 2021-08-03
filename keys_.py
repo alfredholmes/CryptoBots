@@ -1,0 +1,2 @@
+API = 'vuj1PJvY87jzncXe7ydnartDkse1X5hqSSSMlXxejMunHicyyzdjntnOClTbhi5a'
+SECRET = 'KPVCurHCCTUIwIg1ZFpaHlILz5bEKGnME9TDjUeFyOW0SeLPOlQ1f6aTxFwZgMGF'
