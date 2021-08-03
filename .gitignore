@@ -1,5 +1,5 @@
 #API keys file
-keys.py
+keys*
 #all csvfiles
 *.csv
 # Byte-compiled / optimized / DLL files

@@ -134,7 +134,8 @@ class OrderBookManager:
 		self.initialized = False
 	
 
-	async def connect(self, listen_to_trades=False, uri="wss://stream.binance.com:9443/stream"):
+	async def connect(self, listen_to_trades=False, uri="wss://stream.binance.com:9443/stream", rest_endpoint='https://api.binance.com/api/v3/'):
+		self.rest_endpoint = rest_endpoint
 		self.client = await websockets.client.connect(uri, ssl=True)
 		self.id = 0
 		#automatically parse messages as they arrive
@@ -159,7 +160,7 @@ class OrderBookManager:
 		if not self.initialized:
 			await self.connect()
 		
-		to_subscribe = [s for s in symbols if s not in self.books]
+		to_subscribe = set([s for s in symbols if s not in self.books])
 		for s in to_subscribe:
 			self.unhandled_book_updates[s] = []
 
@@ -183,16 +184,21 @@ class OrderBookManager:
 			del self.unhandled_book_updates[s]
 
 	async def get_depth_snapshots(self, *symbols):
+
 		
+
 		for symbol in symbols:
 			params = {
 				'symbol': symbol.upper(),
 				'limit': 1000
 			}
 			
-			r = await self.http_client.get('https://api.binance.com/api/v3/depth', params=params)
+			r = await self.http_client.get(self.rest_endpoint + 'depth', params=params)
 
 			response = json.loads(r.text)
+			if 'code' in response:
+				print(symbol, response)
+				continue
 			self.books[symbol] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
 
 
@@ -245,18 +251,19 @@ class OrderBookManager:
 				#TODO: Better error handling
 				print('Key error: ', e)
 
-	async def unsubscribe_to_depth(self, symbol):
+	async def unsubscribe_to_depths(self, *symbols):
 		self.id += 1
 		data = {
 			"method": "UNSUBSCRIBE",
-			"params": [symbol + '@depth@100ms'],
+			"params": [s + '@depth@100ms' for s in symbols],
 			"id": self.id 
 		}
 
 		self.requests[self.id] = {'data': data, 'response': None} 
 
 		await self.client.send(json.dumps(data))
-		del self.books[symbol]
+		for symbol in symbols:
+			del self.books[symbol]
 
 	async def unsubscribe_to_trade(self, symbol):
 		self.id += 1
