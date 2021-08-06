@@ -197,7 +197,7 @@ class OrderBookManager:
 
 			response = json.loads(r.text)
 			if 'code' in response:
-				print(symbol, response)
+				#print(symbol, response)
 				continue
 			self.books[symbol] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
 

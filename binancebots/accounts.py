@@ -146,7 +146,6 @@ class USDTFuturesAccount:
                 response = await self.httpx_client.get(self.endpoint + 'account', headers=headers, params=params)
                 account = json.loads(response.text)
 
-                print(account)
                 self.spot_balances = {asset['asset']: float(asset['free']) + float(asset['locked']) for asset in account['balances'] if float(asset['free']) != 0}
 
 
@@ -639,7 +638,6 @@ class SpotAccount:
 		response = await self.httpx_client.get(self.endpoint + 'account', headers=headers, params=params)
 		account = json.loads(response.text)
 
-		print(account)
 		self.spot_balances = {asset['asset']: float(asset['free']) + float(asset['locked']) for asset in account['balances'] if float(asset['free']) != 0}
 
 
