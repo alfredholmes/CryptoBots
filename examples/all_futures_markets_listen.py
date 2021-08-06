@@ -17,14 +17,14 @@ async def main():
 
 	symbols = []
 	for base, quotes in markets.items():
-		for q, trading in quotes:
-			if trading == 'TRADING' and q == 'USDT':
+		for q, trading, contract_type in quotes:
+			if trading == 'TRADING' and q == 'USDT' and contract_type == 'PERPETUAL':	
 				symbols.append((base + q).lower())
 
 	await manager.subscribe_to_depths(*symbols)
 	while True:
 		try:
-			print('Unhandled updates::', sum([len(q)for q in  manager.unhandled_book_updates.values()]))
+			print('Unhandled updates:', sum([len(q)for q in  manager.unhandled_book_updates.values()]))
 			for s in symbols:
 				print(s, 'Market buy price:', manager.books[s].market_buy_price(), ' Market sell price', manager.books[s].market_sell_price())
 			await asyncio.sleep(1)

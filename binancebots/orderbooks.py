@@ -136,7 +136,7 @@ class OrderBookManager:
 
 	async def connect(self, listen_to_trades=False, uri="wss://stream.binance.com:9443/stream", rest_endpoint='https://api.binance.com/api/v3/'):
 		self.rest_endpoint = rest_endpoint
-		self.client = await websockets.client.connect(uri, ssl=True)
+		self.client = await websockets.connect(uri, ssl=True)
 		self.id = 0
 		#automatically parse messages as they arrive
 		self.q = asyncio.Queue()
@@ -225,31 +225,26 @@ class OrderBookManager:
 
 	async def parse(self):
 		while  True:
-			try:
-				message = await self.q.get()
-				if 'stream' in message and 'depth' in message['stream']:
-					symbol = message['stream'].split('@')[0]
-					if symbol not in self.books:
-						self.unhandled_book_updates[symbol].append(message['data'])
-						continue
-					self.books[symbol].update(message['data'])
-					if symbol in self.tradestreams:
-						if self.listen_to_trades:
-							await self.trade_q.put((symbol, message['data'], self.tradestreams[symbol].trades[:], dict(self.tradestreams[symbol].ask_modifyer), dict(self.tradestreams[symbol].bid_modifyer)))
-
-						self.tradestreams[symbol].clear()
-				elif 'stream' in message and 'trade' in message['stream']:
-					symbol = message['stream'].split('@')[0]
-					self.tradestreams[symbol].add_trade(self.books[symbol], message['data']['E'], message['data']['t'], message['data']['m'], float(message['data']['p']), float(message['data']['q']))
-				elif 'result' in message and message['result'] is None:
-					self.requests[int(message['id'])] = True
-				else:
-					print('Unandled WSS message: ', message, ' | Request: ', self.requests[message['id']])
-
-				self.q.task_done()
-			except KeyError as e:
-				#TODO: Better error handling
-				print('Key error: ', e)
+			
+			message = await self.q.get()
+			if 'stream' in message and 'depth' in message['stream']:
+				symbol = message['stream'].split('@')[0]
+				if symbol not in self.books:
+					self.unhandled_book_updates[symbol].append(message['data'])
+					continue
+				self.books[symbol].update(message['data'])
+				if symbol in self.tradestreams:
+					if self.listen_to_trades:
+						await self.trade_q.put((symbol, message['data'], self.tradestreams[symbol].trades[:], dict(self.tradestreams[symbol].ask_modifyer), dict(self.tradestreams[symbol].bid_modifyer)))
+					self.tradestreams[symbol].clear()
+			elif 'stream' in message and 'trade' in message['stream']:
+				symbol = message['stream'].split('@')[0]
+				self.tradestreams[symbol].add_trade(self.books[symbol], message['data']['E'], message['data']['t'], message['data']['m'], float(message['data']['p']), float(message['data']['q']))
+			elif 'result' in message and message['result'] is None:
+				self.requests[int(message['id'])] = True
+			else:
+				print('Unandled WSS message: ', message, ' | Request: ', self.requests[message['id']])
+			self.q.task_done()
 
 	async def unsubscribe_to_depths(self, *symbols):
 		self.id += 1

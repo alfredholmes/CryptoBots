@@ -15,12 +15,17 @@ async def get_spot_markets(httpx_client=None, endpoint='https://api.binance.com/
 	data = json.loads(response.text)
 	markets = {}
 	for symbol in data['symbols']:
-		if symbol['baseAsset'] == 'DEFI':
-			print(symbol)
+		contract =  'contractType' in symbol
 		if symbol['baseAsset'] in markets:
-			markets[symbol['baseAsset']].append([symbol['quoteAsset'], symbol['status']])
+			if contract:
+				markets[symbol['baseAsset']].append([symbol['quoteAsset'], symbol['status'], symbol['contractType']])
+			else:
+				markets[symbol['baseAsset']].append([symbol['quoteAsset'], symbol['status']])
 		else:		
-			markets[symbol['baseAsset']] = [[symbol['quoteAsset'], symbol['status']]]
+			if contract:
+				markets[symbol['baseAsset']] = [[symbol['quoteAsset'], symbol['status'], symbol['contractType']]]
+			else:
+				markets[symbol['baseAsset']] = [[symbol['quoteAsset'], symbol['status']]]
 	return markets
 
 async def get_futures_markets(httpx_client=None, endpoint='https://fapi.binance.com/fapi/v1/'):

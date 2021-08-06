@@ -29,6 +29,7 @@ class USDTFuturesAccount:
 		self.assets = None
 
 
+
 	async def connect(self):
 		if not self.orderbook_manager.initialized:
 			await self.orderbook_manager.connect()
@@ -71,21 +72,59 @@ class USDTFuturesAccount:
 
 
 		
-	async def market_buy(self, asset, quote, quote_volume):
+	async def market_order(self, asset, quote, quantity):
 		if len(self.market_filters) == 0:
 			await self.connect()
 		market = asset + quote
+		side = 'BUY' if quantity > 0 else 'SELL'
 		params = {
 			'symbol': market,
-			'type': 'MARKET'
-			'side': 'BUY'
+			'type': 'MARKET',
+			'side': 'SIDE'
 		}
+			
 		if market not in self.market_filters:
 			print('Invaild market, cannot trade', market)
 			return
-		if quote_volume > self.assets[quote]
+		if market.lower() not in self.orderbook_manager.books:
+			print('Not listening to the trade stream for ', market , ', can\'t trade')
+			return
 
-	async def market_sell(self, market, quantity):
+		stepped_quantity = int(quantity / float(self.market_filters[market]['step_size'])) * float(self.market_filters[market]['step_size'])
+
+		if quantity < self.market_filters[market]['min_order']:
+			print('Order error in ', market, ',', quantity, 'below minimum order')
+		if quantity > self.market_filters[market]['max_order']:
+			print('Order error in ', market, ',', quantity, 'above maximum order')
+
+		price = quantity * self.orderbook_manager.books[market.lower()].market_buy_price(quantity)
+		required_margin = price / int(self.positions[market]['leverage'])
+
+		if required_margin > float(self.assets[quote]['availableBalance']):
+			print('Insufficient margin to place trade')
+
+		precision = self.market_filters[market]['precision']
+
+		form = form = "{:." + str(precision) + "f}"
+		params['quantity'] = form.format(quantity)
+		headers = {'X-MBX-APIKEY': self.api_key}
+		self.sign_params(params)
+		r = await self.httpx_client.post(self.endpoint + 'order', headers=headers, params=params)
+		print(r.text)
+
+
+	async def close_position(self, asset, quote):
+		if len(self.market_filters) == 0:
+			await self.connect()
+
+		market = asset + quote
+		
+		
+		
+
+		
+		
+	async def market_sell(self, symbol, quantity):
 		pass
 
 	async def limit_buy(self, market, quantity):
