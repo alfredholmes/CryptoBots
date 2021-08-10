@@ -1,6 +1,5 @@
 import asyncio
 
-import websockets, httpx
 import json
 
 #basic local orderbook implementation 
@@ -91,6 +90,8 @@ class OrderBook:
 
 		return recived / volume
 
+	def mid_price(self):
+		return (self.market_buy_price() + self.market_sell_price()) / 2
 
 class TradeStream:
 	def __init__(self, initial_id):
@@ -130,31 +131,26 @@ class TradeStream:
 
 
 class OrderBookManager:
-	def __init__(self):
+	def __init__(self, connection_manager):
 		self.initialized = False
+		self.connection_manager = connection_manager
 	
 
-	async def connect(self, listen_to_trades=False, uri="wss://stream.binance.com:9443/stream", rest_endpoint='https://api.binance.com/api/v3/'):
-		self.rest_endpoint = rest_endpoint
-		self.client = await websockets.connect(uri, ssl=True)
-		self.id = 0
-		#automatically parse messages as they arrive
-		self.q = asyncio.Queue()
-		self.socket_listener = asyncio.create_task(self.listen())
-		self.http_client = httpx.AsyncClient()
+	async def connect(self, listen_to_trades=False):
+		
+
+
+		self.q = self.connection_manager.ws_q 
 
 		self.books = {}
 		self.trades = {}
 		self.to_parse = []
 		self.unhandled_book_updates = {}
-
 		self.requests = {}
-
 		self.initialized = True
 		self.websocket_parser = asyncio.create_task(self.parse())
 		self.tradestreams = {}
 		self.listen_to_trades=listen_to_trades
-		self.trade_q = asyncio.Queue()
 
 	async def subscribe_to_depths(self, *symbols):
 		if not self.initialized:
@@ -165,16 +161,13 @@ class OrderBookManager:
 			self.unhandled_book_updates[s] = []
 
 		#subscribe
-		self.id += 1
 
 		data = {
 			"method": "SUBSCRIBE",
-			"params": [s + '@depth@100ms' for s in to_subscribe],
-			"id": self.id
+			"params": [s + '@depth@100ms' for s in to_subscribe] 
 		}
 
-		self.requests[self.id] = {'data': data, 'response': None}
-		await self.client.send(json.dumps(data))
+		await self.connection_manager.ws_send(data)
 
 		await self.get_depth_snapshots(*to_subscribe)
 		
@@ -184,18 +177,15 @@ class OrderBookManager:
 			del self.unhandled_book_updates[s]
 
 	async def get_depth_snapshots(self, *symbols):
-
-		
-
 		for symbol in symbols:
 			params = {
 				'symbol': symbol.upper(),
-				'limit': 1000
+				'limit': 100
 			}
 			
-			r = await self.http_client.get(self.rest_endpoint + 'depth', params=params)
 
-			response = json.loads(r.text)
+			response = await self.connection_manager.rest_get('/v3/depth', params = params, weight=10) 
+			
 			if 'code' in response:
 				#print(symbol, response)
 				continue
@@ -211,21 +201,17 @@ class OrderBookManager:
 			await self.subscribe_to_depth(symbol)
 		if symbol in self.trades:
 			return
-		self.id += 1
 		data = {
 			"method": "SUBSCRIBE",
-			"params": [symbol + '@trade'],
-			"id": self.id
+			"params": [symbol + '@trade']
 		}
 
-		self.requests[self.id] = {'data': data, 'response': None}
-		await self.client.send(json.dumps(data))
+		await self.connection_manager.ws_send(data)
 		self.tradestreams[symbol] = TradeStream(self.books[symbol].last_id)
 
 
 	async def parse(self):
-		while  True:
-			
+		while  True:	
 			message = await self.q.get()
 			if 'stream' in message and 'depth' in message['stream']:
 				symbol = message['stream'].split('@')[0]
@@ -256,7 +242,7 @@ class OrderBookManager:
 
 		self.requests[self.id] = {'data': data, 'response': None} 
 
-		await self.client.send(json.dumps(data))
+		await self.connection_manager.ws_send(data)
 		for symbol in symbols:
 			del self.books[symbol]
 
@@ -270,20 +256,14 @@ class OrderBookManager:
 
 		self.requests[self.id] = {'data': data, 'response': None}
 
-		await self.client.send(json.dumps(data))	
+		await self.connection_manager.ws_send(data)	
 		del self.tradestreams[symbol]
 
 
-	async def listen(self):
-		async for message in self.client:
-			await self.q.put(json.loads(message))
 	
 
 	async def close_connection(self):
 		if self.initialized:	
-			await self.http_client.aclose()
-			await self.client.close()
-			self.socket_listener.cancel()
 			self.websocket_parser.cancel()
 
 

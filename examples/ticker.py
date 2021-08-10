@@ -1,16 +1,17 @@
 import sys
 sys.path.append("./")
 from binancebots.orderbooks import OrderBookManager
+from binancebots.binance import connectionManager
 
-
-import httpx
 import asyncio
 
 
 
 async def main(symbols):
+	connection_manager = connectionManager('https://api.binance.com/api', 'wss://stream.binance.com:9443/stream')
+	await connection_manager.ws_connect()
 	manager = OrderBookManager()
-	await manager.connect()
+	await manager.connect(connection_manager)
 	
 	await manager.subscribe_to_depths(*symbols)
 	while True:
