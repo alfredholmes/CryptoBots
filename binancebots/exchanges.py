@@ -15,6 +15,10 @@ class Exchange(ABC):
 		self.order_books = {}
 		self.unhandled_order_book_updates = {}
 
+		self.volume_filters = {}
+		self.volume_renderers = {}
+		self.price_renderers = {}
+		self.exchange_info = None
 
 	def close(self):
 		'''Cancel the objects asyncio tasks'''
@@ -88,7 +92,24 @@ class Exchange(ABC):
 	@abstractmethod
 	async def get_account_balance(self, api_key, secret_key) -> dict:
 		'''Gets the account balance of the accout with the given api_key'''
-	
+
+	@abstractmethod
+	async def market_buy_price(pair, **kwargs):
+		if pair.lower() not in self.order_books:
+			self.subscribe_to_order_books(pair)
+
+		volume = None if 'volume' not in kwargs else kwargs['volume']
+		quote_volume = None if 'quote_volume' not in kwargs else kwargs['quote_volume']
+
+		if volume is None and quote_volume is None:
+			return self.order_books[pair.lower()].market_buy_price()
+		elif quote_volume is None:
+			return self.order_books[pair.lower()].market_buy_price(volume)
+		else:
+			asks = reversed(self.order_books[pairs].asks.keys())
+			to_spend = quote_volume
+			
+
 	@abstractmethod
 	async def subscribe_to_order_books(self, *currencies) -> None:
 		'''Start listening to orderbooks'''
@@ -101,7 +122,76 @@ class Exchange(ABC):
 	@abstractmethod
 	async def limit_order(self, pair: str, side: str, price: float, base_volume: float) -> dict: 
 		'''Places a limit order, similar to market_order'''
+	
 
+	@abstractmethod
+	async def filter_volume(self, pair: str, base_volume: float) -> float:
+		'''Returns a valid trading volume close to the requested'''
+
+	
+	@abstractmethod	
+	async def render_volume(self, pair: str, base_volume: float) -> str:
+		'''Renders the tradding volume as a string to be sent in the request'''
+
+
+	def filter_volume(self, pair: str, base_volume: float, price: float) -> float:
+		'''Returns a valid trading volume close to the requested'''
+		for volume_filter in self.volume_filters[pair.upper()].values():
+			base_volume = volume_filter.filter(base_volume, price)
+	
+	def render_volume(self, pair: str, base_volume: float) -> str:
+		'''Renders the tradding volume as a string to be sent in the request'''
+		return self.volume_renderes[pair.upper()].render(base_volume)
+	
+	def render_price(self, pair: str, price: float) -> str:
+		return self.price_renderes[pair.upper()].render(price)
+
+class VolumeFilterParameters(ABC):
+	pass
+
+class VolumeFilter(ABC):
+	def __init__(self, parameters: VolumeFilterParameters):
+		self.parameters = parameters
+
+	@abstractmethod
+	def filter(self, volume: float, price: float) -> float:
+		pass
+
+class MinNotionalParameters(VolumeFilterParameters):
+	def __init__(self, min_notional):
+		self.min_notional = min_notional
+
+class MinNotionalFilter(VolumeFilter):
+	def filter(self, volume: float, price: float) -> float:
+		if volume * price < self.parameters.min_notional:
+			return 0
+		else:
+			return price
+
+class MinMaxParameters(VolumeFilterParameters):
+	def __init__(self, min_volume, max_volume):
+		self.min_volume = min_volume
+		self.max_volume = max_volume
+
+class MinMaxFilter(VolumeFilter):
+	def filter(self, volume: float, price: float) -> float:
+		if volume < self.parameters.min_volume:
+			return 0
+		if volume > self.max_volume:
+			return self.parameters.max_volume
+
+		return volume
+
+
+class FloatRenderer:
+	def __init__(self, precision, tick_size):
+		self.precision = precision
+		self.tick_size = tick_size
+
+
+	def render(self, value: float) -> str:
+		n_ticks = int(value / self.tick_size)
+		return '{0:.' + str(self.precision) + 'f}'.format(n_ticks * self.tick_size)
 
 
 class BinanceSpot(Exchange):
@@ -112,17 +202,59 @@ class BinanceSpot(Exchange):
 		params['timestamp'] = str(timestamp)
 		params['signature'] = hmac.new(secret_key.encode('utf-8'), urllib.parse.urlencode(params).encode('utf-8'), hashlib.sha256).hexdigest()
 		return params
-	
 
-	async def get_exchange_info(self):
-		self.exchange_info = await self.submit_request(self.connection_manager.rest_get('/v3/exchangeInfo'), {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
+	async def signed_get(self, endpoint, api_key, secret_key, **kwargs):
+		params = {} if 'params' not in kwargs else kwargs['params']	
+		headers = {} if 'headers' not in kwargs else kwargs['headers']	
+		weights = {'RAW_REQUESTS': 1} if 'weights' not in kwargs else kwargs['weights']	
+
+		headers['X-MBX-APIKEY'] = api_key
+		BinanceSpot.sign_params(secret_key, params)
+
+		return await self.submit_request(self.connection_manager.rest_get(endpoint, params=params, headers = headers), weights)
+
+	async def signed_post(self, endpoint, api_key, secret_key, **kwargs):
+		params = {} if 'params' not in kwargs else kwargs['params']	
+		headers = {} if 'headers' not in kwargs else kwargs['headers']	
+		weights = {'RAW_REQUESTS': 1} if 'weights' not in kwargs else kwargs['weights']	
+		
+		headers['X-MBX-APIKEY'] = api_key
+		BinanceSpot.sign_params(secret_key, params)
+
+		
+		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers = headers), weights)
+
+	async def get_exchange_info(self, cache = True):
+		if self.exchange_info is not None and cache:
+			return self.exchange_info
+
+
+		self.exchange_info = await self.submit_request(self.connection_manager.rest_get('/api/v3/exchangeInfo'), {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
 		self.limits = []
 		times = {'SECOND': 1, 'MINUTE': 60, 'DAY': 24 * 60 * 60}
 		for limit in self.exchange_info['rateLimits']:
 				self.limits.append((limit['rateLimitType'], times[limit['interval']] * limit['intervalNum'], limit['limit'])) 
 			
 		for symbol in self.exchange_info['symbols']:
-			pass	
+			pair = symbol['symbol']
+			self.volume_filters[pair] = {}
+			for volume_filter in symbol['filters']:
+				if volume_filter['filterType'] == 'MIN_NOTIONAL':
+					min_notional = float(volume_filter['minNotional'])	
+					self.volume_filters[pair]['MIN_NOTIONAL'] = MinNotionalFilter(MinNotionalParameters(min_notional))
+				if volume_filter['filterType'] == 'LOT_SIZE':
+					min_size = float(volume_filter['minQty'])
+					max_size = float(volume_filter['maxQty'])
+					self.volume_filters[pair]['LOT_SIZE'] = MinMaxFilter(MinMaxParameters(min_size, max_size))
+					
+					precision = float(symbol['baseAssetPrecision'])
+					tick_size = float(volume_filter['stepSize'])
+					self.volume_renderers[pair] = FloatRenderer(precision, tick_size)
+				
+				if volume_filter['filterType'] == 'PRICE_FILTER':
+					precision = float(symbol['quotePrecision'])
+					tick_size = float(volume_filter['tickSize'])
+					self.price_renderers[pair] = FloatRenderer(precision, tick_size)
 		return self.exchange_info
 
 	def parse_order_book_update(self, message):
@@ -137,13 +269,11 @@ class BinanceSpot(Exchange):
 
 
 	async def get_account_balance(self, api_key, secret_key) -> dict:
-		params = BinanceSpot.sign_params(secret_key)
-		headers = {'X-MBX-APIKEY': api_key}
-		response = await self.submit_request(self.connection_manager.rest_get('/v3/account', params=params, headers=headers), {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
-		return response
+		return await self.signed_get('/api/v3/account', api_key, secret_key,params=params, headers=headers, weights = {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
+		
 
 	async def subscribe_to_order_books(self, *symbols) -> None:
-		to_subscribe = set(s.lower() for s in symbols if s not in self.order_books)
+		to_subscribe = set(s.lower() for s in symbols if s.lower() not in self.order_books)
 		for s in to_subscribe:
 			self.unhandled_order_book_updates[s] = []
 
@@ -159,6 +289,17 @@ class BinanceSpot(Exchange):
 				self.order_books.update(update)
 			del self.unhandled_order_book_updates[s]
 
+	async def unsubscribe_to_order_books(self, *symbols) -> None:
+		to_unsubscribe = set(s.lower() for s in symbols if s.lower() in self.order_books)
+
+		ws_request = {
+			'method': 'UNSUBSCRIBE',
+			'params': [s + '@depth@100ms' for s in to_unsubscribe]
+		}
+
+		await self.connection_manager.ws_send(ws_request)
+		for s in to_unsubscribe:
+			del self.order_books[s]
 
 	async def get_depth_snapshots(self, *symbols):
 		for symbol in symbols:
@@ -167,13 +308,83 @@ class BinanceSpot(Exchange):
 				'limit': 100
 			}
 
-			response = await self.submit_request(self.connection_manager.rest_get('/v3/depth', params=params), {'REQUEST_WEIGHT': 1, 'RAW_REQUESTS': 1})
+			response = await self.submit_request(self.connection_manager.rest_get('/api/v3/depth', params=params), {'REQUEST_WEIGHT': 1, 'RAW_REQUESTS': 1})
 			self.order_books[symbol.lower()] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
 
-
-
-	async def market_order(self, pair, side, base_volume):
-		pass
+	async def get_asset_dividend(self,limit, api, secret):
+		params = {'limit': limit}
+		return await self.signed_get('/sapi/v1/asset/assetDividend', api, secret, params = params, weights={'REQUEST_WEIGHT': 1, 'RAW_REQUESTS': 1})
 	
-	async def limit_order(self, pair, side, price, base_volume):
-		pass
+
+	async def market_order(self, pair, side, base_volume, api_key, secret_key):
+		#get the price
+		unubscribe = False
+		if pair.lower() not in self.order_books:
+			await self.subscribe_to_order_books(pair)	
+			unsibscribe = True
+
+		if side == 'BUY':
+			price = self.order_books[pair].market_buy_price(base_volume)
+		elif side == 'SELL':
+			price = self.order_books[pair].market_sell_price(base_volume)
+		else:
+			print('ORDER TYPE ERROR')
+			#TODO: actually raise an exception
+		
+
+		volume = self.filter_volume(pair, base_volume, price)
+		if volume == 0:
+			return
+
+		volume_str = self.render_volume(pair, volume)
+		
+		#send trade request
+		params = {
+			'symbol': pair.upper(),
+			'side': side,
+			'type': 'MARKET',
+			'quantity': volume_str
+		}
+
+		response = await self.signed_post('/api/v3/order', api_key, secret_key, params=params)
+
+		if unsubscribe:
+			await self.unsubscribe_to_order_books(pair)
+
+		return response
+
+
+	async def market_order_quote_volume(self, pair, side, quote_volume, api_key, secret_key):
+		if quote_volume < self.market_filters[pair.upper()]['MIN_NOTIONAL'].parameters.min_notional:
+			return 0
+
+		params = {
+			'symbol': pair.upper(),
+			'side': side,
+			'type': 'MARKET',
+			'quoteOrderQty': str(quote_volume)
+		}
+
+		return await self.signed_post('/api/v3/order', api_key, secret_key, params=params)
+
+	async def limit_order(self, pair, side, price, base_volume, api_key, secret_key):
+		volume = self.fliter_volume(pair,base_volume, price)
+		if volume == 0:
+			return
+		volume_str = self.render_volume(pair, volume)
+		pirice_str = self.render_price(pair, price)
+
+		params = {
+			'symbol': pair.upper(),
+			'side': side,
+			'type': 'LIMIT',	
+			'timeInForce': 'GTC',
+			'quantity': volume_str,
+			'price': price_str 
+		}
+		
+		return await self.signed_post('/api/v3/order', api_key, secret_key, params=params)
+		
+
+
+

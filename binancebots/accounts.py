@@ -22,8 +22,9 @@ class Account:
 
 
 
-class SpotAccount(Account):
-	pass
+class BinanceAccount(Account):
+	async def get_dividend_record(self, limit = 20):
+		return await self.exchange.get_asset_dividend(limit, self.api_key, self.secret_key)
 
 class FuturesAccount(Account):
 	pass
