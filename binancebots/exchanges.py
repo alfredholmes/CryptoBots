@@ -3,6 +3,8 @@ import asyncio, datetime
 from .connections import ConnectionManager
 from .orderbooks import OrderBook
 import asyncio, json, datetime, hashlib, hmac, urllib, httpx, websockets
+
+
 class Exchange(ABC):
 	def __init__(self, connection_manager: ConnectionManager):
 		'''Initalize an exchange object'''
@@ -93,22 +95,26 @@ class Exchange(ABC):
 	async def get_account_balance(self, api_key, secret_key) -> dict:
 		'''Gets the account balance of the accout with the given api_key'''
 
-	@abstractmethod
 	async def market_buy_price(pair, **kwargs):
 		if pair.lower() not in self.order_books:
-			self.subscribe_to_order_books(pair)
-
-		volume = None if 'volume' not in kwargs else kwargs['volume']
-		quote_volume = None if 'quote_volume' not in kwargs else kwargs['quote_volume']
-
-		if volume is None and quote_volume is None:
-			return self.order_books[pair.lower()].market_buy_price()
-		elif quote_volume is None:
-			return self.order_books[pair.lower()].market_buy_price(volume)
+			await self.subscribe_to_order_books(pair)
+		if 'volume' in kwargs:
+			return self.order_books[pair.lower()].market_buy_price(kwargs['volume'])
+		if 'quote_volume' in kwargs:
+			return self.order_books[pair.lower()].market_buy_price_quote_volume(kwargs['volume'])
 		else:
-			asks = reversed(self.order_books[pairs].asks.keys())
-			to_spend = quote_volume
-			
+			return self.order_books[pair.lower()].market_buy_price()
+	
+	async def market_sell_price(pair, **kwargs):
+		if pair.lower() not in self.order_books:
+			await self.subscribe_to_order_books(pair)
+		if 'volume' in kwargs:
+			return self.order_books[pair.lower()].market_sell_price(kwargs['volume'])
+		if 'quote_volume' in kwargs:
+			return self.order_books[pair.lower()].market_sell_price_quote_volume(kwargs['volume'])
+		else:
+			return self.order_books[pair.lower()].market_sell_price()
+
 
 	@abstractmethod
 	async def subscribe_to_order_books(self, *currencies) -> None:
@@ -265,15 +271,7 @@ class BinanceSpot(Exchange):
 				return
 			self.order_books[symbol].update(message['data'])
 		else:
-			print('Unhandled book update', message)
-
-
-	async def get_account_balance(self, api_key, secret_key) -> dict:
-		return await self.signed_get('/api/v3/account', api_key, secret_key,params=params, headers=headers, weights = {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
-		
-
-	async def subscribe_to_order_books(self, *symbols) -> None:
-		to_subscribe = set(s.lower() for s in symbols if s.lower() not in self.order_books)
+				to_subscribe = set(s.lower() for s in symbols if s.lower() not in self.order_books)
 		for s in to_subscribe:
 			self.unhandled_order_book_updates[s] = []
 

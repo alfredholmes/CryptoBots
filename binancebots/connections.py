@@ -16,8 +16,12 @@ class ConnectionManager:
 
 		self.rest_requests = []
 		self.rest_request_limits = {} #{'timeperiod': number}
+		
 
-	async def __aenter__(self):
+	async def __aenter__(self):	
+		self.ws_client = await websockets.connect(self.ws_uri, ssl=True)
+		self.ws_listener = asyncio.create_task(self.ws_listen())
+		self.subscribed_to_ws_stream = True
 		return self
 
 	async def __aexit__(self, exc_type, exc_value, traceback):
@@ -28,11 +32,6 @@ class ConnectionManager:
 	
 
 
-	async def ws_connect(self):
-		'''Subscribe to the websocket stream and creates a task to asynchronusly listen to the incoming messages'''
-		self.ws_client = await websockets.connect(self.ws_uri, ssl=True)
-		self.ws_listener = asyncio.create_task(self.ws_listen())
-		self.subscribed_to_ws_stream = True
 
 
 

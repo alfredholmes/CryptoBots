@@ -1,59 +1,59 @@
 import asyncio
+import time
 
 from .accounts import Account 
 from .exchanges import Exchange, BinanceSpot
 
 import numpy as np
+import networks as nx
 
 
-class TradingRoute:
-	def __init__(sell_asset, buy_asset, path, order_books, trading_fee = 0):
-		self.sell_asset = sell_asset
-		self.buy_asset = buy_asset
-		self.path = path
-		self.order_books = order_books
-		self.trading_fee = 0
+class TradingSale:
+	def __init__(self, sell_asset: str, buy_asset: str, quote_asset: str, trading_fee, order_book, min_order, max_order, min_notional):
+		self.base = base
+		self.quote = quote
+		self.order_book = order_book
+		self.min_order = self.min_order
+		self.max_order = max_order
+		self.min_notional = min_notional
 
-
-	def cheapest_sale(self) -> (float, float):
-		'''Calculates the most efficient movement of sell_asset into buy_asset returns the volumes sold and bought'''
-		asset_volume = None
-		current_asset = self.sell_asset
-		rolling_prices = 1
-		for (base, quote), order_book in zip(self.path, self.order_books):
-			if base == current_asset:
-				#sell the base
-				price = sorted(order_book.bids.keys(), reverse=True)[0]
-				max_volume = order_books.bids[price]
-				if asset_volume is None:
-					asset_volume = max_volume
-				else:
-					volume = min(max_volume, volume)
-			else:
-				#buy the base
-				price = sorted(order_book.asks.keys())[0]
-				max_volume = order_book.asks[price] * price
-				if asswt_volume is None:
-					asset_volume = max_volume
-				else:
-					volume = min(max_volume)
-
-
-			volume *= (1 - self.trading_fee) / rolling_price
+		if quote_asset != sell_asset and quote_asset != buy_asset:
+			print('Error, the quote asset is neither the buy nor sell asset')
 	
-	def calculate_cost(self, volume):
-		'''Calculates the total cost of moving assets along this path'''
+	def min_market_order(self) -> float:
+		'''Calculates the minimum volume (in sell asset) for a market order'''		
+		if quote_asset == sell_asset:
+			#calculate quote volume of min order
+			min_order_price = self.order_book.market_sell_price(self.min_order)
+			min_order_quote_volume = self.min_order * min_order_price
+			return min(self.min_notional, min_order_quote_volume)
+		else:
+			#calculate volume of min notional
+			min_notional_price = self.order_book.market_buy_price_quote_volume(self.min_notional)
+			min_notional_volume = self.min_notional / min_notional_price
+			return min(min_notional_volume, self.min_order)
 
+			
+
+	def market_order_price(self, side: str, volume: float) -> float:
+		'''Calculates the volume aquired of buy_asset when volume of sell_asset is sold'''
+		if quote_asset == sell_asset:
+			return volume / self.order_book.market_buy_price_quote_volume(volume) 
+		else:
+			return volume * self.order_book.market_sell_price(volume)
+
+		
 
 class Trader:
-	def __init__(self, account: Account, exchange: Exchange, assets: list, quotes: list):
+	def __init__(self, account: Account, exchange: Exchange, assets: list, quotes: list, trading_fee = 0):
 		'''Construct a Trader instance, assets are the assets that the trader can trade, while quotes are the quote markets to look at for each asset (if they exist)'''
 		self.account = account
 		self.exchange = exchange
 		self.assets = assets
 		self.quotes = quotes
 			
-		self.trading_routes = {}
+		self.trading_fee = trading_fee
+		self.sales = {}
 
 
 	async def get_trading_markets(self):
@@ -62,66 +62,19 @@ class Trader:
 		self.trading_markets = []
 		for symbol in exchange_info['symbols']:
 			if symbol['status'] == 'TRADING' and symbol['baseAsset'] in self.assets and symbol['quoteAsset'] in self.quotes:
-				self.market_filters[symbol['symbol']] = symbol['filters']
-				for filter in symbol['filters']:
-					pass
 				self.trading_markets.append((symbol['baseAsset'], symbol['quoteAsset']))
 		
+		await self.exchange.subscribe_to_order_books(*[base + quote for base, quote in self.trading_markets])
+		
+		for base, quote in self.trading_markets:
+			if base not in self.sales:
+				self.sales[base] = []
+			if quote not in self.sales:
+				self.sales[quote] = []
+		
+			
+			self.sales[base].append(TradingSale(base, quote, self.trading_fee, self.exchange.order_books[(base + quote).lower()])) 
 
-		for i, (base_1, quote_1) in enumerate(self.trading_markets:
-			if base_1 not in self.trading_routes:
-				self.trading_routes[base_1] = {}
-			if quote_1 not in self.trading_routes:
-				self.trading_routes[quote_1] = {}
-			if quote_1 not in self.trading_routes[base_1]:
-				self.trading_routes[base_1][quote_1] = []
-			self.trading_routes[base_1][quote_1].append((base_1, quote_1))
-			self.trading_routes[quote_1][base_1].append((base_1, quote_1))
-
-			for base_2, quote_2 in self.trading_markets[i+1:]:
-				if base_2 == base_1:
-					if quote_2 not in self.trading_routes:
-						self.trading_routes[quote_2] = {}
-					if quote_1 not in self.trading_routes[quote_2]:
-						self.trading_routes[quote_2][quote_1] = []
-					if quote_2 not in self.trading_routes[quote_1]:
-						self.trading_routes[quote_1][quote_2] = []
-
-					self.trading_routes[quote_1][quote_2].append(((base_1, quote_1), (base_2, quote_2)))
-					self.trading_routes[quote_2][quote_1].append(((base_2, quote_2), (base_1, quote_1)))
-					
-				if base_2 == quote_1:
-					if quote_2 not in self.trading_routes:
-						self.trading_routes[quote_2] = {}
-					if base_1 not in self.trading_routes[quote_2]:
-						self.trading_routes[quote_2][base_1] = []
-					if quote_2 not in self.trading_routes[base_1]:
-						self.trading_routes[base_1][quote_2] = []
-
-					self.trading_routes[base_1][quote_2].append(((base_1, quote_1), (base_2, quote_2)))
-					self.trading_routes[quote_2][base_1].append(((base_2, quote_2), (base_1, quote_1)))
-
-				if quote_2 == base_1:
-					if base_2 not in self.trading_routes:
-						self.trading_routes[base_2] = {}
-					if quote_1 not in self.trading_routes[base_2]:
-						self.trading_routes[base_2][quote_1] = []
-					if base_2 not in self.trading_routes[quote_1]:
-						self.trading_routes[quote_1][base_2] = []
-
-					self.trading_routes[quote_1][base_2].append(((base_1, quote_1), (base_2, quote_2)))
-					self.trading_routes[base_2][quote_1].append(((base_2, quote_2), (base_1, quote_1)))
-
-				if quote_2 == quote_1:
-					if base_2 not in self.trading_routes:
-						self.trading_routes[base_2] = {}
-					if base_1 not in self.trading_routes[base_2]:
-						self.trading_routes[base_2][base_1] = []
-					if base_2 not in self.trading_routes[base_1]:
-						self.trading_routes[base_1][base_2] = []
-
-					self.trading_routes[base_1][base_2].append(((base_1, quote_1), (base_2, quote_2)))
-					self.trading_routes[base_2][base_1].append(((base_2, quote_2), (base_1, quote_1)))
 
 	
 	async def subscribe_to_order_books(self, symbols: list = None):
@@ -129,19 +82,18 @@ class Trader:
 		if symbols is None:
 			symbols = self.trading_markets
 
-		print(len(symbols))
 		await self.exchange.subscribe_to_order_books(*[(base + quote).lower() for base, quote in symbols])
 
-	def portfolio_values(self, assets: list = None, base='USDT'):
-		'''Calculate the weighted portfolio of assets the account by calculating the value in BTC. If assets is None calculate the weighted portfolio of the account'''
+	def prices(self, assets: list = None, base='USDT'):
+		'''Calculate the prices of an asset with respect to the base. The trading pairs need not exist'''
 		if assets is None:
 			assets = self.account.balance
-		total_base = np.zeros(len(assets))
+		assets = [asset for asset in assets]
+		asset_prices = np.zeros(len(assets))
 		for i, asset in enumerate(assets):
 			amount = 0
 			price = 1
 			if asset in self.account.balance:
-				#calculate BTC price...
 				amount = self.account.balance[asset]
 				if asset != base:
 					if (asset, base) in self.trading_markets:
@@ -159,20 +111,27 @@ class Trader:
 								prices.append(1 / self.exchange.order_books[( middle_asset + asset).lower()].mid_price() *self.exchange.order_books[(middle_asset + base).lower()].mid_price())
 							if (base, middle_asset) in self.trading_markets and (middle_asset, asset) in self.trading_markets:
 								prices.append(1 / self.exchange.order_books[(middle_asset + asset).lower()].mid_price() * 1 / self.exchange.order_books[(base+ middle_asset).lower()].mid_price())
-						price = np.mean(prices)
-			total_base[i] = amount * price	
-			if np.isnan(total_base[i]):
-				print('Warning: asset volume is nan', asset, prices)
-			 
-		return {a: total_base[i] for i, a in enumerate(assets)}
+						if len(prices) != 0:
+							price = np.mean(prices)
+						else:
+							print('Trading error, no route!')
+			asset_prices[i] = price	 
+		return {a: asset_prices[i] for i, a in enumerate(assets)}
+	
 
+
+	def portfolio_values(self, assets: list = None, base = 'USDT'):
+		if assets is None:
+			assets = self.account.balance
+		prices = self.prices(assets, base)
+		return {asset: self.account.balance[asset] * prices[asset] if asset in self.account.balance else 0 for asset in assets}
 	
 	def weighted_portfolio(self, assets: list = None, base='USDT'):
 		base_values = self.portfolio_values(assets, base)
 		total = sum(base_values.values())
 		return {asset: value / total for asset, value in base_values.items()}
 
-	def trade_to_portfolio_market(self, portfolio: dict, base='USDT', trading_fee=0.1 / 100):
+	async def trade_to_portfolio_market(self, portfolio: dict, base='USDT', trading_fee=0.1 / 100):
 		'''Trade to rebalance the accounts portfolio to the portfolio parameter. 
 
 		args:
@@ -180,32 +139,57 @@ class Trader:
 		- base: currency to calculate the portfolio weights in'''
 
 		assets = [asset for asset in portfolio]
+		prices = self.prices(assets, base)
 		base_values = self.portfolio_values(assets)
 		total_value = sum(base_values.values())	
-
-		current_weighted_portfolio = np.array(current_portfolio[asset] / total_value for asset in assets)
-		target_portfolio = np.array(portfolio[asset] for asset in assets)
+		
+		current_weighted_portfolio = np.array([base_values[asset] / total_value for asset in assets])
+		target_portfolio = np.array([portfolio[asset] for asset in assets])
 		
 
 
 		target_portfolio /= np.sum(target_portfolio)
 		
 		buys = np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
-		sells = -np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
+		sells = -np.min([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
 		
-		sell_actual = np.array(self.account.balance[asset] if asset in self.account.balance else 0 for asset in assets ) * sells / current_weighted_portfolio
-
+		sell_actual = np.array([self.account.balance[asset] if asset in self.account.balance else 0 for asset in assets]) * sells / current_weighted_portfolio
 		buy_assets = [asset for i, asset in enumerate(assets) if buys[i] > 0]	
 		sell_assets = [asset for i, asset in enumerate(assets) if sells[i] > 0]
 
-		routes = []
-		for buy_asset in buy_assets:
-			for sell_asset in sell_assets:
-				routes.extend(self.trading_routes[buy_asset][sell_asset])	
+		total_sells = np.sum(sells)
+		
+		for i, asset in sell_assets:
+			volume = sell_actual[i] 
+			if volume < min([s.min_market_order for s in self.sales[asset]]):
+				sells[i] = 0	
+
+		buys *= np.sum(sells) / total_sells	
+
+		target_portfolio = current_weighted_portfolio + buys - sells
+
+		while np.sum(sells) > 0.01:
+			#remove the residual assets
+			for i, asset in sell_assets:
+				volume = sell_actual[i] 
+				if volume < min([s.min_market_order for s in self.sales[asset]]):
+					sells[i] = 0	
+		
+		
+		
+	def best_market_trades_cost(self, portfolio: dict, target_portfolio: dict):
+		assets = set(portfolio).intersecion(target_portfolio)
+		assets = [a for a in assets]
+
+		portfolio = np.array([portfolio[a] for a in assets])
+		target_portfolio = np.array([target_portfolio[a] for a in assets]
+	
+		
 			
-					
 
 
+	def trade_value(self, target_portfolio, account_portfolio, trade):
+		pass
 
 class SpotTrader(Trader):
 	pass

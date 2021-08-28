@@ -68,6 +68,21 @@ class OrderBook:
 
 		return spent / volume
 
+	def market_buy_price_quote_volume(self, volume):
+		'''Calculates the price if an order were to be placed with volume quote volume'''	
+
+		to_sell = volume
+		bought = 0
+		
+		for ask in sorted(self.asks.keys()):
+			offered = self.asks[ask] * ask
+			if offered < to_sell:
+				to_sell -= offered
+				bought += self.asks[ask]
+			else:
+				bought += to_sell / ask
+				to_sell = 0
+		return volume / bought
 
 	def market_sell_price(self, volume = 0):
 		if volume == 0:
@@ -75,20 +90,37 @@ class OrderBook:
 
 		to_sell = volume
 		sold = 0
-		recived = 0
+		received = 0
+
 
 		for bid in sorted(self.bids.keys(), reverse=True):
 			if self.bids[bid] < to_sell:
 				to_sell -= self.bids[bid]
 				sold += self.bids[bid]
-				recived += bid * self.bids[bid]
+				received += bid * self.bids[bid]
 			else:
 				sold += to_sell
-				recived += bid * to_sell
+				received += bid * to_sell
 				to_sell = 0
+
 				break
 
-		return recived / volume
+		return received / volume
+
+	def market_sell_price_quote_volume(self, volume):
+		to_buy = volume
+		sold = 0
+
+		for bid in sorted(self.bids.keys(), reverse=True):
+			offered = self.bids[bid] * bid
+			if offered < to_buy:
+				to_buy -= offered
+				sold += self.bids[bid]
+			else:
+				to_buy = 0
+				sold += to_buy / bid
+		return volume / sold
+
 
 	def mid_price(self):
 		return (self.market_buy_price() + self.market_sell_price()) / 2
@@ -187,7 +219,6 @@ class OrderBookManager:
 			response = await self.connection_manager.rest_get('/v3/depth', params = params, weight=10) 
 			
 			if 'code' in response:
-				#print(symbol, response)
 				continue
 			self.books[symbol] = OrderBook(response['lastUpdateId'], {'bids': response['bids'], 'asks': response['asks']})
 
