@@ -5,15 +5,15 @@ from .accounts import Account
 from .exchanges import Exchange, BinanceSpot
 
 import numpy as np
-import networks as nx
 
 
 class TradingSale:
 	def __init__(self, sell_asset: str, buy_asset: str, quote_asset: str, trading_fee, order_book, min_order, max_order, min_notional):
-		self.base = base
-		self.quote = quote
+		self.sell_asset = sell_asset
+		self.buy_asset = buy_asset
+		self.quote_asset = quote_asset
 		self.order_book = order_book
-		self.min_order = self.min_order
+		self.min_order = min_order
 		self.max_order = max_order
 		self.min_notional = min_notional
 
@@ -22,16 +22,16 @@ class TradingSale:
 	
 	def min_market_order(self) -> float:
 		'''Calculates the minimum volume (in sell asset) for a market order'''		
-		if quote_asset == sell_asset:
+		if self.quote_asset == self.sell_asset:
 			#calculate quote volume of min order
 			min_order_price = self.order_book.market_sell_price(self.min_order)
 			min_order_quote_volume = self.min_order * min_order_price
-			return min(self.min_notional, min_order_quote_volume)
+			return max(self.min_notional, min_order_quote_volume)
 		else:
 			#calculate volume of min notional
 			min_notional_price = self.order_book.market_buy_price_quote_volume(self.min_notional)
 			min_notional_volume = self.min_notional / min_notional_price
-			return min(min_notional_volume, self.min_order)
+			return max(min_notional_volume, self.min_order)
 
 			
 
@@ -72,8 +72,10 @@ class Trader:
 			if quote not in self.sales:
 				self.sales[quote] = []
 		
-			
-			self.sales[base].append(TradingSale(base, quote, self.trading_fee, self.exchange.order_books[(base + quote).lower()])) 
+			min_max_params = self.exchange.volume_filters[base + quote]['LOT_SIZE'].parameters	
+			min_notional_params = self.exchange.volume_filters[base + quote]['MIN_NOTIONAL'].parameters
+			self.sales[base].append(TradingSale(base, quote, quote, self.trading_fee, self.exchange.order_books[(base + quote).lower()], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
+			self.sales[quote].append(TradingSale(quote, base, quote, self.trading_fee, self.exchange.order_books[(base + quote).lower()], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
 
 
 	
@@ -131,7 +133,7 @@ class Trader:
 		total = sum(base_values.values())
 		return {asset: value / total for asset, value in base_values.items()}
 
-	async def trade_to_portfolio_market(self, portfolio: dict, base='USDT', trading_fee=0.1 / 100):
+	async def trade_to_portfolio_market(self, portfolio: dict, quote='USDT', trading_fee=0.1 / 100):
 		'''Trade to rebalance the accounts portfolio to the portfolio parameter. 
 
 		args:
@@ -139,57 +141,66 @@ class Trader:
 		- base: currency to calculate the portfolio weights in'''
 
 		assets = [asset for asset in portfolio]
-		prices = self.prices(assets, base)
-		base_values = self.portfolio_values(assets)
-		total_value = sum(base_values.values())	
-		
-		current_weighted_portfolio = np.array([base_values[asset] / total_value for asset in assets])
+		prices = self.prices(assets, quote)
+		quote_values = self.portfolio_values(assets, quote)
+		total_value = sum(quote_values.values())	
+		current_weighted_portfolio = np.array([quote_values[asset] / total_value for asset in assets])
 		target_portfolio = np.array([portfolio[asset] for asset in assets])
 		
 
 
 		target_portfolio /= np.sum(target_portfolio)
 		
-		buys = np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
 		sells = -np.min([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
 		
-		sell_actual = np.array([self.account.balance[asset] if asset in self.account.balance else 0 for asset in assets]) * sells / current_weighted_portfolio
-		buy_assets = [asset for i, asset in enumerate(assets) if buys[i] > 0]	
-		sell_assets = [asset for i, asset in enumerate(assets) if sells[i] > 0]
+		sell_actual = np.array([self.account.balance[asset] if asset in self.account.balance else 0 for asset in assets]) * sells / (current_weighted_portfolio + 10**-16)
+		sell_assets = [(i, asset) for i, asset in enumerate(assets) if sells[i] > 0]
 
 		total_sells = np.sum(sells)
-		
-		for i, asset in sell_assets:
+		sell_orders = []
+
+
+		for i, asset in sell_assets:	
 			volume = sell_actual[i] 
-			if volume < min([s.min_market_order for s in self.sales[asset]]):
-				sells[i] = 0	
-
-		buys *= np.sum(sells) / total_sells	
-
-		target_portfolio = current_weighted_portfolio + buys - sells
-
-		while np.sum(sells) > 0.01:
-			#remove the residual assets
-			for i, asset in sell_assets:
-				volume = sell_actual[i] 
-				if volume < min([s.min_market_order for s in self.sales[asset]]):
-					sells[i] = 0	
+			if volume < min([s.min_market_order() for s in self.sales[asset]]):
+				sells[i] = 0
+			elif (asset, quote) in self.trading_markets:
+				sell_orders.append((asset, volume))	
 		
+		#execute trades
+		responses = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume) for base, volume in sell_orders])
 		
+		quote_values = self.portfolio_values(assets, quote)
+		total_value = sum(quote_values.values())
 		
-	def best_market_trades_cost(self, portfolio: dict, target_portfolio: dict):
-		assets = set(portfolio).intersecion(target_portfolio)
-		assets = [a for a in assets]
+		buys = np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
+		buy_assets = [(i, asset) for i, asset in enumerate(assets) if buys[i] > 0]
+		buys *= np.sum(sells) / total_sells #TODO: replace with actual aquired sales	
+		
+		buy_orders = []
+		total_sold = 0
+		available_quote = self.account.balance[quote]
 
-		portfolio = np.array([portfolio[a] for a in assets])
-		target_portfolio = np.array([target_portfolio[a] for a in assets]
+		
+		for i, asset in buy_assets:
+			quote_volume = buys[i] * total_value
+			if total_sold + quote_volume > available_quote:
+				quote_volume = available_quote - total_sold
+			
+			if (asset, quote) in self.trading_markets:
+				for s in self.sales[quote]:
+					if s.buy_asset == asset:
+						sale = s
+				if quote_volume < sale.min_market_order():
+					buys[i] = 0
+				else:
+					buy_orders.append((asset, quote_volume))	
+					total_sold += quote_volume
+
+		responses = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume) for asset, quote_volume in buy_orders])
 	
 		
-			
-
-
-	def trade_value(self, target_portfolio, account_portfolio, trade):
-		pass
+		
 
 class SpotTrader(Trader):
 	pass

@@ -19,6 +19,8 @@ class Exchange(ABC):
 
 		self.volume_filters = {}
 		self.volume_renderers = {}
+		self.quote_volume_renderers = {}
+
 		self.price_renderers = {}
 		self.exchange_info = None
 
@@ -134,20 +136,17 @@ class Exchange(ABC):
 	async def filter_volume(self, pair: str, base_volume: float) -> float:
 		'''Returns a valid trading volume close to the requested'''
 
-	
-	@abstractmethod	
-	async def render_volume(self, pair: str, base_volume: float) -> str:
-		'''Renders the tradding volume as a string to be sent in the request'''
-
 
 	def filter_volume(self, pair: str, base_volume: float, price: float) -> float:
 		'''Returns a valid trading volume close to the requested'''
 		for volume_filter in self.volume_filters[pair.upper()].values():
 			base_volume = volume_filter.filter(base_volume, price)
+
+		return base_volume
 	
 	def render_volume(self, pair: str, base_volume: float) -> str:
 		'''Renders the tradding volume as a string to be sent in the request'''
-		return self.volume_renderes[pair.upper()].render(base_volume)
+		return self.volume_renderers[pair.upper()].render(base_volume)
 	
 	def render_price(self, pair: str, price: float) -> str:
 		return self.price_renderes[pair.upper()].render(price)
@@ -172,7 +171,7 @@ class MinNotionalFilter(VolumeFilter):
 		if volume * price < self.parameters.min_notional:
 			return 0
 		else:
-			return price
+			return volume
 
 class MinMaxParameters(VolumeFilterParameters):
 	def __init__(self, min_volume, max_volume):
@@ -183,22 +182,22 @@ class MinMaxFilter(VolumeFilter):
 	def filter(self, volume: float, price: float) -> float:
 		if volume < self.parameters.min_volume:
 			return 0
-		if volume > self.max_volume:
+		if volume > self.parameters.max_volume:
 			return self.parameters.max_volume
-
 		return volume
 
 
 class FloatRenderer:
-	def __init__(self, precision, tick_size):
-		self.precision = precision
+	def __init__(self, precision, tick_size = None):
+		self.precision = int(precision)
 		self.tick_size = tick_size
 
 
 	def render(self, value: float) -> str:
+		if self.tick_size is None:
+			return ('{0:.' + str(self.precision) + 'f}').format(value)
 		n_ticks = int(value / self.tick_size)
-		return '{0:.' + str(self.precision) + 'f}'.format(n_ticks * self.tick_size)
-
+		return ('{0:.' + str(self.precision) + 'f}').format(n_ticks * self.tick_size)
 
 class BinanceSpot(Exchange):
 	def sign_params(secret_key: str, params: dict = None):
@@ -240,10 +239,14 @@ class BinanceSpot(Exchange):
 		times = {'SECOND': 1, 'MINUTE': 60, 'DAY': 24 * 60 * 60}
 		for limit in self.exchange_info['rateLimits']:
 				self.limits.append((limit['rateLimitType'], times[limit['interval']] * limit['intervalNum'], limit['limit'])) 
-			
+		
 		for symbol in self.exchange_info['symbols']:
 			pair = symbol['symbol']
 			self.volume_filters[pair] = {}
+			
+			quote_precision = int(symbol['quoteAssetPrecision'])
+			self.quote_volume_renderers[pair] = FloatRenderer(int(symbol['quoteAssetPrecision']))
+			
 			for volume_filter in symbol['filters']:
 				if volume_filter['filterType'] == 'MIN_NOTIONAL':
 					min_notional = float(volume_filter['minNotional'])	
@@ -252,7 +255,6 @@ class BinanceSpot(Exchange):
 					min_size = float(volume_filter['minQty'])
 					max_size = float(volume_filter['maxQty'])
 					self.volume_filters[pair]['LOT_SIZE'] = MinMaxFilter(MinMaxParameters(min_size, max_size))
-					
 					precision = float(symbol['baseAssetPrecision'])
 					tick_size = float(volume_filter['stepSize'])
 					self.volume_renderers[pair] = FloatRenderer(precision, tick_size)
@@ -271,7 +273,10 @@ class BinanceSpot(Exchange):
 				return
 			self.order_books[symbol].update(message['data'])
 		else:
-				to_subscribe = set(s.lower() for s in symbols if s.lower() not in self.order_books)
+			print('Unhandled book update', message)
+
+	async def subscribe_to_order_books(self, *symbols):
+		to_subscribe = set(s.lower() for s in symbols if s.lower() not in self.order_books)
 		for s in to_subscribe:
 			self.unhandled_order_book_updates[s] = []
 
@@ -316,21 +321,22 @@ class BinanceSpot(Exchange):
 
 	async def market_order(self, pair, side, base_volume, api_key, secret_key):
 		#get the price
-		unubscribe = False
+		unsubscribe = False
 		if pair.lower() not in self.order_books:
 			await self.subscribe_to_order_books(pair)	
 			unsibscribe = True
 
 		if side == 'BUY':
-			price = self.order_books[pair].market_buy_price(base_volume)
+			price = self.order_books[pair.lower()].market_buy_price(base_volume)
 		elif side == 'SELL':
-			price = self.order_books[pair].market_sell_price(base_volume)
+			price = self.order_books[pair.lower()].market_sell_price(base_volume)
 		else:
 			print('ORDER TYPE ERROR')
 			#TODO: actually raise an exception
 		
 
 		volume = self.filter_volume(pair, base_volume, price)
+		
 		if volume == 0:
 			return
 
@@ -344,26 +350,56 @@ class BinanceSpot(Exchange):
 			'quantity': volume_str
 		}
 
-		response = await self.signed_post('/api/v3/order', api_key, secret_key, params=params)
+		response = await self.signed_post('/api/v3/order', api_key, secret_key, params=params, weights = {'ORDERS': 1, 'RAW_REQUESTS': 1})
 
 		if unsubscribe:
 			await self.unsubscribe_to_order_books(pair)
 
-		return response
+		base_change = 0
+		quote_change = 0
+		commission  = {}
+		if response['status'] == 'FILLED':
+			for fill in response['fills']:
+				if side == 'BUY':
+					base_change += float(fill['qty'])
+					quote_change -= float(fill['qty']) * float(fill['price'])
+				elif side == 'SELL':
+					base_change -= float(fill['qty'])
+					quote_change += float(fill['qty']) * float(fill['price'])
+				if fill['commissionAsset'] not in commission:
+					commission[fill['commissionAsset']] = 0
+				commission[fill['commissionAsset']] += float(fill['commission'])
+
+		return base_change, quote_change, commission
 
 
 	async def market_order_quote_volume(self, pair, side, quote_volume, api_key, secret_key):
-		if quote_volume < self.market_filters[pair.upper()]['MIN_NOTIONAL'].parameters.min_notional:
+		if quote_volume < self.volume_filters[pair.upper()]['MIN_NOTIONAL'].parameters.min_notional:
 			return 0
 
 		params = {
 			'symbol': pair.upper(),
 			'side': side,
 			'type': 'MARKET',
-			'quoteOrderQty': str(quote_volume)
+			'quoteOrderQty': self.quote_volume_renderers[pair].render(quote_volume)
 		}
 
-		return await self.signed_post('/api/v3/order', api_key, secret_key, params=params)
+		response = await self.signed_post('/api/v3/order', api_key, secret_key, params=params, weights = {'ORDERS': 1, 'RAW_REQUESTS': 1})
+		base_change = 0
+		quote_change = 0
+		commission  = {}
+		if response['status'] == 'FILLED':
+			for fill in response['fills']:
+				if side == 'BUY':
+					base_change += float(fill['qty'])
+					quote_change -= float(fill['qty']) * float(fill['price'])
+				elif side == 'SELL':
+					base_change -= float(fill['qty'])
+					quote_change += float(fill['qty']) * float(fill['price'])
+				if fill['commissionAsset'] not in commission:
+					commission[fill['commissionAsset']] = 0
+				commission[fill['commissionAsset']] += float(fill['commission'])
+		return base_change, quote_change, commission
 
 	async def limit_order(self, pair, side, price, base_volume, api_key, secret_key):
 		volume = self.fliter_volume(pair,base_volume, price)
@@ -381,8 +417,9 @@ class BinanceSpot(Exchange):
 			'price': price_str 
 		}
 		
-		return await self.signed_post('/api/v3/order', api_key, secret_key, params=params)
+		return await self.signed_post('/api/v3/order', api_key, secret_key, params=params, weights={'ORDERS': 1, 'RAW_REQUESTS': 1})
 		
 
 
-
+	async def get_account_balance(self, api_key, secret_key):
+		return await self.signed_get('/api/v3/account', api_key, secret_key, weights = {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})

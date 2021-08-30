@@ -78,7 +78,7 @@ class ConnectionManager:
 		headers = {} if 'headers' not in kwargs else kwargs['headers']
 		response =  await self.httpx_client.post(self.base_endpoint + endpoint, params = params, headers = headers)	
 		response.raise_for_status()
-		return response
+		return json.loads(response.text)
 
 
 	
