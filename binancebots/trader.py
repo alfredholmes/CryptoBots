@@ -60,9 +60,9 @@ class Trader:
 		'''Gets a list of currently trading symbols'''
 		exchange_info = await self.exchange.get_exchange_info()
 		self.trading_markets = []
-		for symbol in exchange_info['symbols']:
-			if symbol['status'] == 'TRADING' and symbol['baseAsset'] in self.assets and symbol['quoteAsset'] in self.quotes:
-				self.trading_markets.append((symbol['baseAsset'], symbol['quoteAsset']))
+		for base, quote in self.exchange.trading_markets:
+			if base in self.assets and quote in self.quotes:
+				self.trading_markets.append((base, quote))
 		
 		await self.exchange.subscribe_to_order_books(*[base + quote for base, quote in self.trading_markets])
 		

@@ -17,6 +17,8 @@ class Exchange(ABC):
 		self.order_books = {}
 		self.unhandled_order_book_updates = {}
 
+		self.trading_markets = []
+
 		self.volume_filters = {}
 		self.volume_renderers = {}
 		self.quote_volume_renderers = {}
@@ -243,6 +245,9 @@ class BinanceSpot(Exchange):
 		for symbol in self.exchange_info['symbols']:
 			pair = symbol['symbol']
 			self.volume_filters[pair] = {}
+
+			if symbol['status'] == 'TRADING':
+				self.trading_markets.append((symbol['baseAsset'], symbol['quoteAsset']))
 			
 			quote_precision = int(symbol['quoteAssetPrecision'])
 			self.quote_volume_renderers[pair] = FloatRenderer(int(symbol['quoteAssetPrecision']))
@@ -423,3 +428,55 @@ class BinanceSpot(Exchange):
 
 	async def get_account_balance(self, api_key, secret_key):
 		return await self.signed_get('/api/v3/account', api_key, secret_key, weights = {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
+
+
+
+class FTXSpot(Exchange):
+	def sign_params(secret_key: str, params: dict = None):
+		pass
+	
+	async def signed_get():
+		pass
+
+	async def signed_post():
+		pass
+
+
+	async def get_exchange_info(self, cache: bool = True):
+		if self.exchange_info is not None and cache:
+			return self.exchange_info
+
+		markets = (await self.connection_manager.rest_get('/markets'))['result']
+		for market in markets:
+			if market['baseCurrency'] is None or not market['enabled']:
+				continue
+			base = market['baseCurrency']
+			quote = market['quoteCurrency']
+			self.trading_markets.append(base, quote)
+				
+
+	def parse_order_book_update(self, message):
+		pass
+
+
+
+	async def subscribe_to_order_books(self, *symbols):
+		pass
+
+	async def unsubscribe_to_order_books(self, *symbols):
+		pass
+
+	async def get_depth_snapshots(sef, *symbols):
+		pass
+
+	async def market_order(self, pair, side, base_volume, api_key, secret_key):
+		pass
+
+	async def market_order_quote_volume(self, pair, side, quote_volume, api_key, secret_key):
+		pass
+
+	async def limit_order(self, pair, side, price, base_volume, api_key, secret_key):
+		pass
+
+	async def get_account_balance(self, api_key, secret_key):
+		pass
