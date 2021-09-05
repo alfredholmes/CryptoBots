@@ -64,7 +64,7 @@ class Trader:
 			if base in self.assets and quote in self.quotes:
 				self.trading_markets.append((base, quote))
 		
-		await self.exchange.subscribe_to_order_books(*[base + quote for base, quote in self.trading_markets])
+		await self.exchange.subscribe_to_order_books(*[m for m in self.trading_markets])
 		
 		for base, quote in self.trading_markets:
 			if base not in self.sales:
@@ -74,8 +74,8 @@ class Trader:
 		
 			min_max_params = self.exchange.volume_filters[base + quote]['LOT_SIZE'].parameters	
 			min_notional_params = self.exchange.volume_filters[base + quote]['MIN_NOTIONAL'].parameters
-			self.sales[base].append(TradingSale(base, quote, quote, self.trading_fee, self.exchange.order_books[(base + quote).lower()], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
-			self.sales[quote].append(TradingSale(quote, base, quote, self.trading_fee, self.exchange.order_books[(base + quote).lower()], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
+			self.sales[base].append(TradingSale(base, quote, quote, self.trading_fee, self.exchange.order_books[(base, quote)], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
+			self.sales[quote].append(TradingSale(quote, base, quote, self.trading_fee, self.exchange.order_books[(base, quote)], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
 
 
 	
@@ -84,7 +84,7 @@ class Trader:
 		if symbols is None:
 			symbols = self.trading_markets
 
-		await self.exchange.subscribe_to_order_books(*[(base + quote).lower() for base, quote in symbols])
+		await self.exchange.subscribe_to_order_books([(base, quote) for base, quote in symbols])
 
 	def prices(self, assets: list = None, base='USDT'):
 		'''Calculate the prices of an asset with respect to the base. The trading pairs need not exist'''
@@ -99,20 +99,20 @@ class Trader:
 				amount = self.account.balance[asset]
 				if asset != base:
 					if (asset, base) in self.trading_markets:
-						price = self.exchange.order_books[(asset + base).lower()].mid_price()
+						price = self.exchange.order_books[(asset, base)].mid_price()
 					elif (base, asset) in self.trading_markets:
-						price = 1 / self.exchange.order_books[(base + asset).lower()].mid_price()
+						price = 1 / self.exchange.order_books[(base, asset)].mid_price()
 					else:
 						prices = []
 						for middle_asset in self.account.balance:
 							if (middle_asset, base) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
-								prices.append(self.exchange.order_books[(asset + middle_asset).lower()].mid_price() * self.exchange.order_books[(middle_asset + base).lower()].mid_price())
+								prices.append(self.exchange.order_books[(asset, middle_asset)].mid_price() * self.exchange.order_books[(middle_asset,base)].mid_price())
 							if (base, middle_asset) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
-								prices.append(self.exchange.order_books[(asset + middle_asset).lower()].mid_price() * 1 / self.exchange.order_books[(base + middle_asset).lower()].mid_price())
+								prices.append(self.exchange.order_books[(asset,middle_asset)].mid_price() * 1 / self.exchange.order_books[(base, middle_asset)].mid_price())
 							if (middle_asset, base) in self.trading_markets and ( middle_asset, asset) in self.trading_markets:
-								prices.append(1 / self.exchange.order_books[( middle_asset + asset).lower()].mid_price() *self.exchange.order_books[(middle_asset + base).lower()].mid_price())
+								prices.append(1 / self.exchange.order_books[( middle_asset, asset)].mid_price() *self.exchange.order_books[(middle_asset,base)].mid_price())
 							if (base, middle_asset) in self.trading_markets and (middle_asset, asset) in self.trading_markets:
-								prices.append(1 / self.exchange.order_books[(middle_asset + asset).lower()].mid_price() * 1 / self.exchange.order_books[(base+ middle_asset).lower()].mid_price())
+								prices.append(1 / self.exchange.order_books[(middle_asset, asset)].mid_price() * 1 / self.exchange.order_books[(base,middle_asset)].mid_price())
 						if len(prices) != 0:
 							price = np.mean(prices)
 						else:

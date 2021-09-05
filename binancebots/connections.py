@@ -38,13 +38,7 @@ class ConnectionManager:
 	async def ws_listen(self):
 		'''Listen to incoming ws messages and adds the data to the processing queue'''
 		async for message in self.ws_client:
-			message = json.loads(message)
-			if 'result' in message:
-				
-				self.ws_requests[message['id']]['response'] = message['result']
-
-			else:
-				await self.ws_q.put(message)
+			await self.ws_q.put(json.loads(message))
 
 	async def ws_send(self, data: dict):
 		'''Send data to the websocket server'''

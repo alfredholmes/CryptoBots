@@ -1,5 +1,5 @@
 from .exchanges import Exchange
-
+import asyncio
 
 class Account:
 	'''Account class to manage orders and store basic data'''
@@ -8,17 +8,20 @@ class Account:
 		self.secret_key = secret
 		self.exchange = exchange
 		self.balance = None
-	
+		self.order_update_queue = exchange.user_update_queue
+		asyncio.create_task(self.parse_order_updates)	
 
 	async def get_balance(self):
 
-		account = await self.exchange.get_account_balance(self.api_key, self.secret_key)
-
-		self.balance = {asset['asset']: float(asset['free']) + float(asset['locked']) for asset in account['balances'] if float(asset['free']) + float(asset['locked']) != 0}
-		self.free_spot_balance = {asset['asset']: float(asset['free']) for asset in account['balances'] if float(asset['free']) != 0}
+		self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key) 
 		
 	async def get_open_orders(self):
 		pass
+	
+	async def parse_order_updates(self):
+		while True:
+			order = await self.order_update_queue.get()
+			self.order_update_queue.task_done()
 
 	async def market_order(self, base, quote, side, **kwargs):
 		if 'quote_volume' not in kwargs and 'volume' not in kwargs:
@@ -26,9 +29,9 @@ class Account:
 			#TODO: proper exception
 			return
 		if 'volume' in kwargs:
-			base_change, quote_change, commission = await self.exchange.market_order(base + quote, side, kwargs['volume'], self.api_key, self.secret_key)
+			base_change, quote_change, commission = await self.exchange.market_order(base, quote, side, kwargs['volume'], self.api_key, self.secret_key)
 		else:
-			base_change, quote_change, commission =  await self.exchange.market_order_quote_volume(base + quote, side, kwargs['quote_volume'], self.api_key, self.secret_key)
+			base_change, quote_change, commission =  await self.exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key)
 	
 		if self.balance is None:
 			await self.get_balance()
