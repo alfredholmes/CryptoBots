@@ -6,7 +6,7 @@ class ConnectionManager:
 	def __init__(self, base_endpoint: str, ws_uri: str):
 		self.base_endpoint = base_endpoint
 		self.ws_uri = ws_uri
-
+		self.open = True
 		self.subscribed_to_ws_stream = False
 
 		self.httpx_client = httpx.AsyncClient()
@@ -25,6 +25,8 @@ class ConnectionManager:
 		return self
 
 	async def __aexit__(self, exc_type, exc_value, traceback):
+		self.open = False
+		await asyncio.sleep(0.1) #allow other tasks to close
 		await self.httpx_client.aclose()
 		if self.subscribed_to_ws_stream:
 			await self.ws_client.close()
@@ -70,7 +72,10 @@ class ConnectionManager:
 		'''Send a post request signed using api and secret keys provided, any key errors will raise an httpx.HTTPStatusError exception'''
 		params = {} if 'params' not in kwargs else kwargs['params']
 		headers = {} if 'headers' not in kwargs else kwargs['headers']
-		response =  await self.httpx_client.post(self.base_endpoint + endpoint, params = params, headers = headers)	
+		
+		response =  await self.httpx_client.post(self.base_endpoint + endpoint, json = params, headers = headers)	
+		response.request.read()
+
 		response.raise_for_status()
 		return json.loads(response.text)
 

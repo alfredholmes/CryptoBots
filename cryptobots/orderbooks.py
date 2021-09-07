@@ -111,15 +111,15 @@ class OrderBook:
 	def market_sell_price_quote_volume(self, volume):
 		to_buy = volume
 		sold = 0
-
 		for bid in sorted(self.bids.keys(), reverse=True):
+			
 			offered = self.bids[bid] * bid
 			if offered < to_buy:
 				to_buy -= offered
 				sold += self.bids[bid]
 			else:
-				to_buy = 0
 				sold += to_buy / bid
+				to_buy = 0
 		return volume / sold
 
 

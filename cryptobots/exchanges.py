@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import asyncio, datetime
 from .connections import ConnectionManager
 from .orderbooks import OrderBook
+from .accounts import Order
 import asyncio, json, datetime, hashlib, hmac, urllib, httpx, websockets, time, urllib.parse
 
 import numpy as np
@@ -19,7 +20,7 @@ class Exchange(ABC):
 		self.ws_parse_task = asyncio.create_task(self.ws_parse())
 		self.order_books = {}
 		self.unhandled_order_book_updates = {}
-		self.order_book_symbols = {}
+		self.trading_symbols = {} #dict to store trading pairs, e.g. {'BTCUSDT': ('BTC', 'USD'), 'ETHBTC': ('ETH', 'BTC') }
 		self.trading_markets = []
 
 		self.volume_filters = {}
@@ -282,10 +283,10 @@ class BinanceSpot(Exchange):
 	def parse_order_book_update(self, message):
 		if 'stream' in message and 'depth' in message['stream']:
 			symbol = message['stream'].split('@')[0]
-			if self.order_book_symbols[symbol] not in self.order_books:
-				self.unhandled_order_book_updates[self.order_book_symbols[symbol]].append(message['data'])
+			if self.trading_symbols[symbol] not in self.order_books:
+				self.unhandled_order_book_updates[self.trading_symbols[symbol]].append(message['data'])
 				return
-			self.order_books[self.order_book_symbols[symbol]].update(message['u'], message['b'], message['a'])
+			self.order_books[self.trading_symbols[symbol]].update(message['u'], message['b'], message['a'])
 		else:
 			print('Unhandled book update', message)
 
@@ -293,7 +294,7 @@ class BinanceSpot(Exchange):
 		to_subscribe = set(s for s in symbols if s not in self.order_books)
 		for s in to_subscribe:
 			self.unhandled_order_book_updates[s] = []
-			self.order_book_symbols[(s[0] + s[1]).lower()] = s
+			self.trading_symbols[(s[0] + s[1]).lower()] = s
 
 		ws_request = {
 			'method': 'SUBSCRIBE',
@@ -445,13 +446,18 @@ class FTXSpot(Exchange):
 	def __init__(self, connection_manager: ConnectionManager):
 		self.ws_authenticated = False
 		self.ws_authentication_response = asyncio.Event()
+		self.ws_ping_task = asyncio.create_task(self.ws_ping())
 		super().__init__(connection_manager)
-
+	
+	async def ws_ping(self):
+		while self.connection_manager.open:
+			data = {'op': 'ping'}
+			await self.connection_manager.ws_send(data)
+			await asyncio.sleep(15 * 60)
 
 	def sign_headers(headers, api_key: str, secret_key: str, method: str, url: str, params: dict = None, subaccount = None ):
 		ts = int(time.time() * 1000)	
 		payload = str(ts) + method.upper() +  url	
-		
 		if params is not None:
 			payload += json.dumps(params)
 		headers['FTX-KEY'] = api_key
@@ -468,15 +474,24 @@ class FTXSpot(Exchange):
 			FTXSpot.sign_headers(headers, api_key, secret_key, 'GET', endpoint, params)	
 		else:
 			FTXSpot.sign_headers(headers, api_key, secret_key, 'GET', endpoint, params, kwargs['subaccount'])	
+		
 		return await self.submit_request(self.connection_manager.rest_get(endpoint, params=params, headers=headers))
 	
-	async def signed_post(self):
+	async def signed_post(self, endpoint: str, api_key: str, secret_key: str, **kwargs):
 		headers = {} if 'headers' not in kwargs else kwargs['headers']
 		params = None if 'params' not in kwargs else kwargs['params']
+			
 		if 'subaccount' not in kwargs:	
 			FTXSpot.sign_headers(headers, api_key, secret_key, 'POST', endpoint, params)	
-		else:
+		else:	
 			FTXSpot.sign_headers(headers, api_key, secret_key, 'POST', endpoint, params, kwargs['subaccount'])
+		if params is not None:
+			none_keys = []
+			for key, value in params.items():
+				if value is None:
+					none_keys.append(key)
+			for key in none_keys:
+				del params[key]
 		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers=headers))
 
 	async def get_exchange_info(self, cache: bool = True):
@@ -495,47 +510,71 @@ class FTXSpot(Exchange):
 			price_tick = market['priceIncrement']
 			size_tick = market['sizeIncrement']
 
-			self.volume_filters[(base + quote).upper()] = {'LOT_SIZE': MinMaxFilter(MinMaxParameters(min_order, max_order)), 'MIN_NOTIONAL': MinNotionalFilter(MinNotionalParameters(0))}
+			self.volume_filters[(base, quote)] = {'LOT_SIZE': MinMaxFilter(MinMaxParameters(min_order, max_order)), 'MIN_NOTIONAL': MinNotionalFilter(MinNotionalParameters(0))}
 
-			self.volume_renderers[(base+quote).upper()] = FloatRenderer(2-int(np.log10(size_tick)), size_tick)
-			self.price_renderers[(base+quote).upper()] = FloatRenderer(2-int(np.log10(price_tick)), price_tick)
+			self.volume_renderers[(base,quote)] = FloatRenderer(2-int(np.log10(size_tick)), size_tick)
+			self.price_renderers[(base,quote)] = FloatRenderer(2-int(np.log10(price_tick)), price_tick)
 	async def ws_parse(self):
 		while True:
 			message = await self.connection_manager.ws_q.get()
-			print(message)
 			if message['type'] == 'error':
 				print('WS ERROR:', message)
 				self.connection_manager.ws_q.task_done()
 				raise Exception(message)
-			if message['channel'] == 'orderbook':
+			elif message['type'] == 'update':
+				if message['channel'] == 'orderbook':
+					self.parse_order_book_update(message)
+					self.connection_manager.ws_q.task_done()	
+				if message['channel'] == 'orders':
+					message_data = message['data']
+					order_update = {
+						'type': 'UPDATE',
+						'id': message_data['id'],
+						'size': message_data['size'],
+						'price': message_data['price'] 
+					}
+					await self.user_update_queue.put(order_update)
+				if message['channel'] == 'fills':
+					message_data = message['data']
+					order_update = {
+						'type': 'FILL',
+						'id': message_data['orderId'],
+						'fees': {message_data['feeCurrency']: message_data['fee']},
+						'price': message_data['price'],
+						'volume': message_data['size']
+					}
+					await self.user_update_queue.put(order_update)
+			elif 'channel' in message and message['channel'] == 'orderbook' and message['type'] == 'partial':
 				self.parse_order_book_update(message)
-				self.connection_manager.ws_q.task_done()	
-			elif message['type'] == 'subscribed' and message['channel'] == 'orders':
+			elif message['type'] == 'subscribed' and (message['channel'] == 'orders' or message['channel'] == 'fills'):
 				self.ws_authenticated = True
 				self.ws_authentication_response.set()
+				
 			elif message['type'] == 'subscribed':
 				self.connection_manager.ws_q.task_done()
+			elif message['type'] == 'pong':
+				pass
 			else:
 				print('Unhandled ws message', message)
 
 
 	def parse_order_book_update(self, message):
 		if message['type'] == 'partial':
-			self.order_books[self.order_book_symbols[message['market']]] = OrderBook(message['data']['time'],  message['data']['bids'], message['data']['asks'])
-			for update in self.unhandled_order_book_updates[self.order_book_symbols[message['market']]]:
-				self.order_books[self.order_book_symbols[message['market']]].update(*update)
-			del self.unhandled_order_book_updates[self.order_book_symbols[message['market']]]
+			self.order_books[self.trading_symbols[message['market']]] = OrderBook(message['data']['time'],  message['data']['bids'], message['data']['asks'])
+			for update in self.unhandled_order_book_updates[self.trading_symbols[message['market']]]:
+				self.order_books[self.trading_symbols[message['market']]].update(*update)
+			del self.unhandled_order_book_updates[self.trading_symbols[message['market']]]
 		elif message['type'] == 'update':
-			if self.order_book_symbols[message['market']] not in self.order_books:
-				self.unhandled_order_book_updates[self.order_book_symbols[message['market']]].append((message['data']['time'], message['data']['bids'], message['data']['asks']))
-			self.order_books[self.order_book_symbols[message['market']]].update(message['data']['time'], message['data']['bids'], message['data']['asks'])
+			if self.trading_symbols[message['market']] not in self.order_books:
+				self.unhandled_order_book_updates[self.trading_symbols[message['market']]].append((message['data']['time'], message['data']['bids'], message['data']['asks']))
+			self.order_books[self.trading_symbols[message['market']]].update(message['data']['time'], message['data']['bids'], message['data']['asks'])
 
 
 
 	async def subscribe_to_order_books(self, *symbols):
 		to_subscribe = set([s for s in symbols if s not in self.order_books])
 		for b, q in to_subscribe:
-			self.order_book_symbols[b + '/' + q] = (b, q)
+			self.trading_symbols[b + '/' + q] = (b, q)
 			self.unhandled_order_book_updates[(b, q)] = []
 		ws_requests = [{'op': 'subscribe', 'channel': 'orderbook', 'market': b + '/' + q} for b, q in to_subscribe]		
 		await asyncio.gather(*[self.connection_manager.ws_send(req) for req in ws_requests])
@@ -554,28 +593,63 @@ class FTXSpot(Exchange):
 	async def get_depth_snapshots(sef, *symbols):
 		pass
 
-	async def market_order(self, base, quote, side, base_volume, api_key, secret_key):
-		for volume_filter in self.volume_filters[(base, quote)]:
-			base_volume = volume_filter.filter(base_volume)
-		base_volume = self.volume_renderers[(base, quote)](base_volume)
+	async def market_order(self, base, quote, side, base_volume, api_key, secret_key, subaccount = None):
+		for volume_filter in self.volume_filters[(base, quote)].values():
+			base_volume = volume_filter.filter(base_volume, self.order_books[(base, quote)].market_buy_price(base_volume))
+		base_volume = self.volume_renderers[(base, quote)].render(base_volume)
 
 		request = {
 			'market': base + '/' + quote,
 			'side': side.lower(),
-			'price': None,
+			'price': 0,
 			'type': 'market',
-			'size': base_volume
+			'size': float(base_volume)
 		}
-		response = await self.signed_post('/api/orders', api_key, secret_key, params=request)
+		response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
+		if 'success' not in response or not response['success']:
+			raise Execption('Order placement failed' + str(response))
+		else:
+			order_info = response['result']
+			return Order(order_info['id'], *self.trading_symbols[order_info['market']], order_info['side'].upper(), order_info['size'])	
+				
 		
 
-	async def market_order_quote_volume(self, base, quote, side, quote_volume, api_key, secret_key):
-		pass
+	async def market_order_quote_volume(self, base, quote, side, quote_volume, api_key, secret_key, subaccount = None):
+		subscribe = (base, quote) not in self.order_books
+		if subscribe:
+			await self.subscribe_to_order_books((base, quote))
+		if side.upper() == 'BUY':
+			base_volume = quote_volume / self.order_books[(base, quote)].market_buy_price_quote_volume(quote_volume)	
+		elif side.upper() == 'SELL':
+			base_volume = quote_volume / self.order_books[(base, quote)].market_sell_price_quote_volume(quote_volume)
+		return await self.market_order(base, quote, side, base_volume, api_key, secret_key, subaccount)
 
-	async def limit_order(self, base, quote, side, price, base_volume, api_key, secret_key):
-		pass
 
-	async def get_account_balance(self, api_key, secret_key, subaccount = 'MAMR'):
+	async def limit_order(self, base, quote, side, price, base_volume, api_key, secret_key, subaccount = None):
+		subscribe = (base, quote) not in self.order_books
+		if subscribe:
+			await self.subscribe_to_order_books((base, quote))
+		for volume_filter in self.volume_filters[(base, quote)].values():
+			base_volume = volume_filter.filter(base_volume, self.order_books[(base, quote)].market_buy_price(base_volume))
+		price = float(self.price_renderers[(base, quote)].render(price))
+		
+		base_volume = self.volume_renderers[(base, quote)].render(base_volume)
+
+		request = {
+			'market': base + '/' + quote,
+			'side': side.lower(),
+			'price': price,
+			'type': 'limit',
+			'size': float(base_volume)
+		}
+		response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
+		if 'success' not in response or not response['success']:
+			raise Execption('Order placement failed' + str(response))
+		else:
+			order_info = response['result']
+			return Order(order_info['id'], *self.trading_symbols[order_info['market']], order_info['side'].upper(), order_info['size'])	
+
+	async def get_account_balance(self, api_key, secret_key, subaccount = None):
 		coins = (await self.signed_get('/api/wallet/balances', api_key, secret_key, subaccount=subaccount))['result']
 		return {coin['coin']: coin['total'] for coin in coins}
 		
@@ -595,7 +669,6 @@ class FTXSpot(Exchange):
 			if subaccount is not None:
 				request_body['args']['subaccount'] = urllib.parse.quote(subaccount) 
 			self.ws_authentication_response = asyncio.Event()
-			print(request_body)
 			await self.connection_manager.ws_send(request_body)
 			#subscribe to the order data
 			request_body = {
@@ -604,6 +677,11 @@ class FTXSpot(Exchange):
 			}
 			await self.connection_manager.ws_send(request_body)
 			await self.ws_authentication_response.wait()
+			request_body = {
+				'op': 'subscribe',
+				'channel': 'fills'
+			}
+			await self.connection_manager.ws_send(request_body)
 			if self.ws_authenticated:
 				return self.user_update_queue
 			else:
