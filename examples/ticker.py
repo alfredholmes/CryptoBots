@@ -1,6 +1,6 @@
-'''MAMR - Bot
+'''Ticker
 
-Script to implement MAMR portfolio management on the Binance cryptocurrency exchange
+Script to demonstate websocket order book updates 
 
 Author: 
 	Alfred Holmes
