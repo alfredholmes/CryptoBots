@@ -30,11 +30,11 @@ For the FTX keys run
 
 and
 
-	$ echo 'SUBACOUNT = "your subaccount name"' >> keys_ftx.py
+	$ echo 'SUBACCOUNT = "your subaccount name"' >> keys_ftx.py
 
 if you want to interact with a subaccount, or
 
-	$ echo 'SUBACOUNT = None' >> keys_ftx.py
+	$ echo 'SUBACCOUNT = None' >> keys_ftx.py
 
 if you wish to use the main FTX account. Once this is done run
 
