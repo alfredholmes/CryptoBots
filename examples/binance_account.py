@@ -1,6 +1,6 @@
-'''FTX
+'''Binance Account
 
-Script to FTX order placement and account information 
+Script to demonstrate binance account interaction, script calculates the value of the spot account in BTC and USDT 
 
 Author: 
 	Alfred Holmes
@@ -34,7 +34,7 @@ async def main():
 		await account.get_balance()	
 		trader = Trader(account, binance, account.balance, [asset for asset in account.balance], ['BTC', 'USDT'])
 		await trader.get_trading_markets()	
-		print(sum(trader.portfolio_values().values()), sum(trader.portfolio_values(account.balance, 'USDT').values()))
+		print('BTC: ', sum(trader.portfolio_values(account.balance).values()), ' USDT:', sum(trader.portfolio_values(account.balance, 'USDT').values()))
 
 if __name__=='__main__':
 	asyncio.run(main())
