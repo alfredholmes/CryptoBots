@@ -9,6 +9,7 @@ import numpy as np
 
 
 class Exchange(ABC):
+	
 	def __init__(self, connection_manager: ConnectionManager):
 		'''Initalize an exchange object'''
 		self.connection_manager = connection_manager
@@ -29,7 +30,9 @@ class Exchange(ABC):
 
 		self.price_renderers = {}
 		self.exchange_info = None
-
+		
+		self.exchange_info_lock = asyncio.Lock()
+		self.subscribe_to_order_book_lock = asyncio.Lock()
 	def close(self):
 		'''Cancel the objects asyncio tasks'''
 		self.send_requests_task.cancel()
@@ -237,22 +240,26 @@ class BinanceSpot(Exchange):
 		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers = headers), weights)
 
 	async def get_exchange_info(self, cache = True):
-		if self.exchange_info is not None and cache:
-			return self.exchange_info
-
-
-		self.exchange_info = await self.submit_request(self.connection_manager.rest_get('/api/v3/exchangeInfo'), {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
+		async with self.exchange_info_lock:
+			if self.exchange_info is not None and cache:
+				return self.exchange_info
+		
+			self.exchange_info = await self.submit_request(self.connection_manager.rest_get('/api/v3/exchangeInfo'), {'REQUEST_WEIGHT': 10, 'RAW_REQUESTS': 1})
+		
 		self.limits = []
 		times = {'SECOND': 1, 'MINUTE': 60, 'DAY': 24 * 60 * 60}
 		for limit in self.exchange_info['rateLimits']:
 				self.limits.append((limit['rateLimitType'], times[limit['interval']] * limit['intervalNum'], limit['limit'])) 
 		
 		for symbol in self.exchange_info['symbols']:
-			pair = symbol['symbol']
+			if (symbol['baseAsset'], symbol['quoteAsset']) in self.trading_markets:
+				continue
+			pair = (symbol['baseAsset'], symbol['quoteAsset'])
+			
 			self.volume_filters[pair] = {}
 
 			if symbol['status'] == 'TRADING':
-				self.trading_markets.append((symbol['baseAsset'], symbol['quoteAsset']))
+					self.trading_markets.append((symbol['baseAsset'], symbol['quoteAsset']))
 			
 			quote_precision = int(symbol['quoteAssetPrecision'])
 			self.quote_volume_renderers[pair] = FloatRenderer(int(symbol['quoteAssetPrecision']))
@@ -274,10 +281,13 @@ class BinanceSpot(Exchange):
 					tick_size = float(volume_filter['tickSize'])
 					self.price_renderers[pair] = FloatRenderer(precision, tick_size)
 		return self.exchange_info
-	async def ws_parse(self, message):
+	async def ws_parse(self):
 		while True:
 			message = await self.connection_manager.ws_q.get()
-			self.parse_order_book_update(message['u'], message['b'], message['a'])
+			if 'result' in message:
+				self.connection_manager.ws_q.task_done()
+				continue
+			self.parse_order_book_update(message)
 			self.connection_manager.ws_q.task_done()
 	
 	def parse_order_book_update(self, message):
@@ -286,7 +296,7 @@ class BinanceSpot(Exchange):
 			if self.trading_symbols[symbol] not in self.order_books:
 				self.unhandled_order_book_updates[self.trading_symbols[symbol]].append(message['data'])
 				return
-			self.order_books[self.trading_symbols[symbol]].update(message['u'], message['b'], message['a'])
+			self.order_books[self.trading_symbols[symbol]].update(message['data']['u'], message['data']['b'], message['data']['a'])
 		else:
 			print('Unhandled book update', message)
 
@@ -305,7 +315,7 @@ class BinanceSpot(Exchange):
 		
 		for s in to_subscribe:
 			for update in self.unhandled_order_book_updates[s]:
-				self.order_books.update(update['u'], update['b'], update['a'])
+				self.order_books[s].update(update['u'], update['b'], update['a'])
 			del self.unhandled_order_book_updates[s]
 
 	async def unsubscribe_to_order_books(self, *symbols) -> None:
@@ -320,15 +330,17 @@ class BinanceSpot(Exchange):
 		for s in to_unsubscribe:
 			del self.order_books[s]
 
+	async def subscribe_to_user_data(self, api, secret):
+		pass
 	async def get_depth_snapshots(self, *symbols):
 		for symbol in symbols:
 			params = {
-				'symbol': symbol.upper(),
+				'symbol': symbol[0].upper() + symbol[1].upper(),
 				'limit': 100
 			}
 
 			response = await self.submit_request(self.connection_manager.rest_get('/api/v3/depth', params=params), {'REQUEST_WEIGHT': 1, 'RAW_REQUESTS': 1})
-			self.order_books[symbol.lower()] = OrderBook(response['lastUpdateId'], response['bids'],response['asks'])
+			self.order_books[symbol] = OrderBook(response['lastUpdateId'], response['bids'],response['asks'])
 
 	async def get_asset_dividend(self,limit, api, secret):
 		params = {'limit': limit}
@@ -495,10 +507,12 @@ class FTXSpot(Exchange):
 		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers=headers))
 
 	async def get_exchange_info(self, cache: bool = True):
-		if self.exchange_info is not None and cache:
-			return self.exchange_info
+		async with self.exchange_info_lock: 
+			if self.exchange_info is not None and cache:
+				return self.exchange_info
 
-		markets = (await self.submit_request(self.connection_manager.rest_get('/api/markets')))['result']
+			markets = (await self.submit_request(self.connection_manager.rest_get('/api/markets')))['result']
+			self.exchange_info = markets
 		for market in markets:
 			if market['baseCurrency'] is None or not market['enabled']:
 				continue
@@ -514,6 +528,7 @@ class FTXSpot(Exchange):
 
 			self.volume_renderers[(base,quote)] = FloatRenderer(2-int(np.log10(size_tick)), size_tick)
 			self.price_renderers[(base,quote)] = FloatRenderer(2-int(np.log10(price_tick)), price_tick)
+		return self.exchange_info
 	async def ws_parse(self):
 		while True:
 			message = await self.connection_manager.ws_q.get()
@@ -572,14 +587,15 @@ class FTXSpot(Exchange):
 
 
 	async def subscribe_to_order_books(self, *symbols):
-		to_subscribe = set([s for s in symbols if s not in self.order_books])
-		for b, q in to_subscribe:
-			self.trading_symbols[b + '/' + q] = (b, q)
-			self.unhandled_order_book_updates[(b, q)] = []
-		ws_requests = [{'op': 'subscribe', 'channel': 'orderbook', 'market': b + '/' + q} for b, q in to_subscribe]		
-		await asyncio.gather(*[self.connection_manager.ws_send(req) for req in ws_requests])
-		while len(self.unhandled_order_book_updates) > 0:
-			await asyncio.sleep(0.1)
+		async with self.subscribe_to_order_book_lock:
+			to_subscribe = set([s for s in symbols if s not in self.order_books])
+			for b, q in to_subscribe:
+				self.trading_symbols[b + '/' + q] = (b, q)
+				self.unhandled_order_book_updates[(b, q)] = []
+			ws_requests = [{'op': 'subscribe', 'channel': 'orderbook', 'market': b + '/' + q} for b, q in to_subscribe]		
+			await asyncio.gather(*[self.connection_manager.ws_send(req) for req in ws_requests])
+			while len(self.unhandled_order_book_updates) > 0:
+				await asyncio.sleep(0.1)
 
 
 	async def unsubscribe_to_order_books(self, *symbols):
@@ -653,7 +669,7 @@ class FTXSpot(Exchange):
 		coins = (await self.signed_get('/api/wallet/balances', api_key, secret_key, subaccount=subaccount))['result']
 		return {coin['coin']: coin['total'] for coin in coins}
 		
-	async def subscribe_to_user_data(self, api_key, secret_key, subaccount = 'None'):
+	async def subscribe_to_user_data(self, api_key, secret_key, subaccount = None):
 		ts = int(time.time() * 1000)
 		payload = str(ts) + 'websocket_login'
 		signature = hmac.new(secret_key.encode(), payload.encode(), hashlib.sha256).hexdigest()

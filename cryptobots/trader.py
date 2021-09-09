@@ -51,7 +51,6 @@ class Trader:
 		self.exchange = exchange
 		self.assets = assets
 		self.quotes = quotes
-			
 		self.trading_fee = trading_fee
 		self.sales = {}
 
@@ -72,8 +71,8 @@ class Trader:
 			if quote not in self.sales:
 				self.sales[quote] = []
 		
-			min_max_params = self.exchange.volume_filters[base + quote]['LOT_SIZE'].parameters	
-			min_notional_params = self.exchange.volume_filters[base + quote]['MIN_NOTIONAL'].parameters
+			min_max_params = self.exchange.volume_filters[(base, quote)]['LOT_SIZE'].parameters	
+			min_notional_params = self.exchange.volume_filters[(base, quote)]['MIN_NOTIONAL'].parameters
 			self.sales[base].append(TradingSale(base, quote, quote, self.trading_fee, self.exchange.order_books[(base, quote)], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
 			self.sales[quote].append(TradingSale(quote, base, quote, self.trading_fee, self.exchange.order_books[(base, quote)], min_max_params.min_volume, min_max_params.max_volume, min_notional_params.min_notional)) 
 
@@ -86,7 +85,7 @@ class Trader:
 
 		await self.exchange.subscribe_to_order_books([(base, quote) for base, quote in symbols])
 
-	def prices(self, assets: list = None, base='USDT'):
+	def prices(self, assets: list = None, base='BTC'):
 		'''Calculate the prices of an asset with respect to the base. The trading pairs need not exist'''
 		if assets is None:
 			assets = self.account.balance
@@ -94,56 +93,57 @@ class Trader:
 		asset_prices = np.zeros(len(assets))
 		for i, asset in enumerate(assets):
 			amount = 0
-			price = 1
-			if asset in self.account.balance:
-				amount = self.account.balance[asset]
-				if asset != base:
-					if (asset, base) in self.trading_markets:
-						price = self.exchange.order_books[(asset, base)].mid_price()
-					elif (base, asset) in self.trading_markets:
-						price = 1 / self.exchange.order_books[(base, asset)].mid_price()
+			price = 0 if asset != base else 1
+			if asset != base:
+				if (asset, base) in self.trading_markets:
+					price = self.exchange.order_books[(asset, base)].mid_price()
+				elif (base, asset) in self.trading_markets:
+					price = 1 / self.exchange.order_books[(base, asset)].mid_price()
+				else:
+					prices = []
+					for middle_asset in self.account.balance:
+						if (middle_asset, base) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
+							prices.append(self.exchange.order_books[(asset, middle_asset)].mid_price() * self.exchange.order_books[(middle_asset,base)].mid_price())
+						if (base, middle_asset) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
+							prices.append(self.exchange.order_books[(asset,middle_asset)].mid_price() * 1 / self.exchange.order_books[(base, middle_asset)].mid_price())
+						if (middle_asset, base) in self.trading_markets and ( middle_asset, asset) in self.trading_markets:
+							prices.append(1 / self.exchange.order_books[( middle_asset, asset)].mid_price() *self.exchange.order_books[(middle_asset,base)].mid_price())
+						if (base, middle_asset) in self.trading_markets and (middle_asset, asset) in self.trading_markets:
+							prices.append(1 / self.exchange.order_books[(middle_asset, asset)].mid_price() * 1 / self.exchange.order_books[(base,middle_asset)].mid_price())
+					if len(prices) != 0:
+						price = np.mean(prices)
 					else:
-						prices = []
-						for middle_asset in self.account.balance:
-							if (middle_asset, base) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
-								prices.append(self.exchange.order_books[(asset, middle_asset)].mid_price() * self.exchange.order_books[(middle_asset,base)].mid_price())
-							if (base, middle_asset) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
-								prices.append(self.exchange.order_books[(asset,middle_asset)].mid_price() * 1 / self.exchange.order_books[(base, middle_asset)].mid_price())
-							if (middle_asset, base) in self.trading_markets and ( middle_asset, asset) in self.trading_markets:
-								prices.append(1 / self.exchange.order_books[( middle_asset, asset)].mid_price() *self.exchange.order_books[(middle_asset,base)].mid_price())
-							if (base, middle_asset) in self.trading_markets and (middle_asset, asset) in self.trading_markets:
-								prices.append(1 / self.exchange.order_books[(middle_asset, asset)].mid_price() * 1 / self.exchange.order_books[(base,middle_asset)].mid_price())
-						if len(prices) != 0:
-							price = np.mean(prices)
-						else:
-							print('Trading error, no route!')
+						print('Trading error, no route!', asset, base)
 			asset_prices[i] = price	 
 		return {a: asset_prices[i] for i, a in enumerate(assets)}
 	
 
 
-	def portfolio_values(self, assets: list = None, base = 'USDT'):
-		if assets is None:
-			assets = self.account.balance
-		prices = self.prices(assets, base)
-		return {asset: self.account.balance[asset] * prices[asset] if asset in self.account.balance else 0 for asset in assets}
+	def portfolio_values(self, portfolio: dict = None, base = 'BTC'):
+		if portfolio is None:
+			portfolio = self.account.balance
+		prices = self.prices(portfolio, base)
+		return {asset: portfolio[asset] * prices[asset] for asset in portfolio}
 	
-	def weighted_portfolio(self, assets: list = None, base='USDT'):
+	def weighted_portfolio(self, assets: list = None, base='BTC'):
 		base_values = self.portfolio_values(assets, base)
 		total = sum(base_values.values())
 		return {asset: value / total for asset, value in base_values.items()}
 
-	async def trade_to_portfolio_market(self, portfolio: dict, quote='USDT', trading_fee=0.1 / 100):
+	async def trade_to_portfolio_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None, trading_fee=0):
 		'''Trade to rebalance the accounts portfolio to the portfolio parameter. 
 
 		args:
 		- portolio: Dict of the portfolio {asset: proportion}. Any currencies not added to the portfolio dict will be ignored, to trade out of an asset {asset: 0} needs to be in the dict.
-		- base: currency to calculate the portfolio weights in'''
+		- base: currency to calculate the portfolio weights in
+		- initial_portfolio - the assets which will be traded to be in the proportions of the target portfolio'''
 
-		assets = [asset for asset in portfolio]
+		assets = [asset for asset in set(portfolio).union(initial_portfolio)]
 		prices = self.prices(assets, quote)
-		quote_values = self.portfolio_values(assets, quote)
 		total_value = sum(quote_values.values())	
+		if initial_portfolio is None:
+			initial_portfolio = self.account.balance
+		quote_values = self.portfolio_values(initial_portfolio, quote)
 		current_weighted_portfolio = np.array([quote_values[asset] / total_value for asset in assets])
 		target_portfolio = np.array([portfolio[asset] for asset in assets])
 		
@@ -168,14 +168,14 @@ class Trader:
 				sell_orders.append((asset, volume))	
 		
 		#execute trades
-		responses = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume) for base, volume in sell_orders])
-		
+		orders = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume, exchange=self.exchange) for base, volume in sell_orders])
+		await asyncio.gather(*[order.fill_event.wait() for order in orders])	
 		quote_values = self.portfolio_values(assets, quote)
 		total_value = sum(quote_values.values())
 		
 		buys = np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
 		buy_assets = [(i, asset) for i, asset in enumerate(assets) if buys[i] > 0]
-		buys *= np.sum(sells) / total_sells #TODO: replace with actual aquired sales	
+		buys *= np.sum(sells) / total_sells #TODO: replace with actual aquired sales:	
 		
 		buy_orders = []
 		total_sold = 0
@@ -197,8 +197,8 @@ class Trader:
 					buy_orders.append((asset, quote_volume))	
 					total_sold += quote_volume
 
-		responses = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume) for asset, quote_volume in buy_orders])
-	
+		orders = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume, exchange=self.exchange) for asset, quote_volume in buy_orders])
+		await asyncio.gather(*[order.fill_event.wait() for order in orders])	
 		
 		
 

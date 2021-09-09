@@ -16,6 +16,7 @@ class Order:
 		self.filled_volume = 0 #Total order volume (including fees)
 		self.total_fees = {} #Fees paid, format {currency: fee}
 		self.fills = []
+		self.fill_event = asyncio.Event()
 	
 	def update(self, update_type, data):	
 		balance_changes = {self.quote: 0, self.base: 0}
@@ -34,6 +35,7 @@ class Order:
 				balance_changes[currency] -= fee
 
 			if self.remaining_volume <= 0:
+				self.fill_event.set()
 				self.open = False
 				self.completed = True
 			
@@ -125,25 +127,37 @@ class FuturesAccount(Account):
 	pass
 
 class FTXAccount(Account):
-	def __init__(self, api, secret, exchange, subaccount = None):
+	def __init__(self, api, secret, exchange, subaccount = None, connection_manager = None):
 		self.subaccount = subaccount
 		super().__init__(api, secret, exchange)
+		if connection_manager is not None:
+			self.connection_manager = connection_manager
 		
 	async def market_order(self, base, quote, side, **kwargs):
+		if 'exchange' in kwargs:
+			exchange = kwargs['exchange']
+		else:
+			exchange = self.exchange 
 		if 'quote_volume' not in kwargs and 'volume' not in kwargs:
 			print('ERROR: missing required argument')
 			#TODO: proper exception
 			return
 		if 'volume' in kwargs:
-			order = await self.exchange.market_order(base, quote, side, kwargs['volume'], self.api_key, self.secret_key, self.subaccount)
+			order = await exchange.market_order(base, quote, side, kwargs['volume'], self.api_key, self.secret_key, self.subaccount)
 		else:
-			order =  await self.exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key, self.subaccount)
+			order =  await exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key, self.subaccount)
 
 		self.orders[order.id] = order
+		return order
 			
-	async def limit_order(self, base, quote, side, price, volume):
-		response = await self.exchange.limit_order(base, quote, 'SELL', price, volume, self.api_key, self.secret_key, self.subaccount)
+	async def limit_order(self, base, quote, side, price, volume, **kwargs):
+		if 'exchange' in kwargs: 
+			exchange = kwargs['exchange']
+		else:
+			exchange = self.exchange
+		response = await exchange.limit_order(base, quote, 'SELL', price, volume, self.api_key, self.secret_key, self.subaccount)
 		self.orders[response.id] = response
+		return response
 	
 	async def get_balance(self):
 		if self.balance is None:

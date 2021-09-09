@@ -3,7 +3,7 @@ import asyncio, json, datetime, hashlib, hmac, urllib, httpx, websockets
 
 class ConnectionManager:
 	'''Manage connections to the Binance APIs'''
-	def __init__(self, base_endpoint: str, ws_uri: str):
+	def __init__(self, base_endpoint: str, ws_uri: str = None):
 		self.base_endpoint = base_endpoint
 		self.ws_uri = ws_uri
 		self.open = True
@@ -19,9 +19,10 @@ class ConnectionManager:
 		
 
 	async def __aenter__(self):	
-		self.ws_client = await websockets.connect(self.ws_uri, ssl=True)
-		self.ws_listener = asyncio.create_task(self.ws_listen())
-		self.subscribed_to_ws_stream = True
+		if self.ws_uri is not None:
+			self.ws_client = await websockets.connect(self.ws_uri, ssl=True)
+			self.ws_listener = asyncio.create_task(self.ws_listen())
+			self.subscribed_to_ws_stream = True
 		return self
 
 	async def __aexit__(self, exc_type, exc_value, traceback):
