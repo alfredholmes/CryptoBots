@@ -22,10 +22,23 @@ To run the other examples that read account information, create the file `keys.p
 
 	$ echo 'API = "your api key"' >> keys.py
 	$ echo 'SECRET' = "your secret key" >> keys.py
+	
+For the FTX keys run
 
-and then run
+	$ echo 'API = "your api key"' >> keys_ftx.py
+	$ echo 'SECRET' = "your secret key" >> keys_ftx.py
 
-	$ python3 examples/balance.py
+and
+
+	$ echo 'SUBACCOUNT = "your subaccount name"' >> keys_ftx.py
+
+if you want to interact with a subaccount, or
+
+	$ echo 'SUBACCOUNT = None' >> keys_ftx.py
+
+if you wish to use the main FTX account. Once this is done run
+
+	$ python3 examples/ftx.py
 
 to get the live spot data for the account.
 
