@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-import asyncio, datetime
+import asyncio 
 from .connections import ConnectionManager
 from .orderbooks import OrderBook
 from .accounts import Order
@@ -30,7 +30,8 @@ class Exchange(ABC):
 
 		self.price_renderers = {}
 		self.exchange_info = None
-		
+	
+		self.request_wait_lock = asyncio.Lock()	
 		self.exchange_info_lock = asyncio.Lock()
 		self.subscribe_to_order_book_lock = asyncio.Lock()
 	def close(self):
@@ -45,34 +46,31 @@ class Exchange(ABC):
 			await self.wait_to_send_request(weights)
 			send_request.set()
 			
-			for weight_type, weight in weights.items():
+
+
+	async def wait_to_send_request(self, weights: dict):
+		'''Waits for the required time to be able to send a request with the given weight'''
+		async with self.request_wait_lock:
+			for weight_type, requests in self.sent_requests.items():
+				for limit_type, interval, limit in self.limits:
+					if limit_type != weight_type or limit_type not in weights:
+						continue
+					now = time.time()
+					relevant_requests = [req for req in requests if now - req[0] < interval]
+					spent = sum(weight for request_time, weight in relevant_requests)	
+					if spent + weights[limit_type] < limit:
+						continue
+					total_spent = 0
+					for request_time, spent in reversed(relevant_requests):
+						total_spent += spent
+						if total_spent + weights[limit_type] >= limit:
+							await asyncio.sleep(interval - (now - request_time))
+							break	
+			for weight_type, value in weights.items():
 				if weight_type not in self.sent_requests:
 					self.sent_requests[weight_type] = []
-				self.sent_requests[weight_type].append((datetime.datetime.now().timestamp(), weight))
+				self.sent_requests[weight_type].append((time.time(), value))
 
-
-	async def wait_to_send_request(self, weight: dict):
-		'''Waits for the required time to be able to send a request with the given weight'''
-		for weight_type, requests in self.sent_requests.items():
-			for limit_type, time, limit in self.limits:
-				if limit_type != weight_type or limit_type not in weight:
-					continue
-				now = datetime.datetime.now().timestamp()
-				relevant_requests = [req for req in requests if now - req[0] < time]
-				spent = sum(req[0] for req in relevant_requests)
-				
-				if spent + weight[limit_type] < limit:
-					continue
-				total_spent = 0
-				
-				for request_time, spent in reversed(relevant_requests):
-					total_spent += spent
-				
-					if total_spent + weight[limit_type] > limit:
-						await asyncio.sleep(limit - (now - request_time))
-						break	
-
-				
 
 
 	async def submit_request(self, request, weights: dict = {}): 
@@ -213,7 +211,7 @@ class BinanceSpot(Exchange):
 	def sign_params(secret_key: str, params: dict = None):
 		if params is None:
 			params = {}
-		timestamp = int(datetime.datetime.now().timestamp() * 1000)
+		timestamp = int(time.time() * 1000)
 		params['timestamp'] = str(timestamp)
 		params['signature'] = hmac.new(secret_key.encode('utf-8'), urllib.parse.urlencode(params).encode('utf-8'), hashlib.sha256).hexdigest()
 		return params
@@ -487,7 +485,7 @@ class FTXSpot(Exchange):
 		else:
 			FTXSpot.sign_headers(headers, api_key, secret_key, 'GET', endpoint, params, kwargs['subaccount'])	
 		
-		return await self.submit_request(self.connection_manager.rest_get(endpoint, params=params, headers=headers))
+		return await self.submit_request(self.connection_manager.rest_get(endpoint, params=params, headers=headers), {'REQUEST': 1})
 	
 	async def signed_post(self, endpoint: str, api_key: str, secret_key: str, **kwargs):
 		headers = {} if 'headers' not in kwargs else kwargs['headers']
@@ -504,9 +502,13 @@ class FTXSpot(Exchange):
 					none_keys.append(key)
 			for key in none_keys:
 				del params[key]
-		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers=headers))
+		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers=headers), {'REQUEST': 1})
 
 	async def get_exchange_info(self, cache: bool = True):
+
+		self.limits.append(('REQUEST', 0.2, 3)) 
+		self.limits.append(('REQUEST', 1, 3))
+		
 		async with self.exchange_info_lock: 
 			if self.exchange_info is not None and cache:
 				return self.exchange_info
@@ -526,8 +528,8 @@ class FTXSpot(Exchange):
 
 			self.volume_filters[(base, quote)] = {'LOT_SIZE': MinMaxFilter(MinMaxParameters(min_order, max_order)), 'MIN_NOTIONAL': MinNotionalFilter(MinNotionalParameters(0))}
 
-			self.volume_renderers[(base,quote)] = FloatRenderer(2-int(np.log10(size_tick)), size_tick)
-			self.price_renderers[(base,quote)] = FloatRenderer(2-int(np.log10(price_tick)), price_tick)
+			self.volume_renderers[(base,quote)] = FloatRenderer(8, size_tick)
+			self.price_renderers[(base,quote)] = FloatRenderer(8, price_tick)
 		return self.exchange_info
 	async def ws_parse(self):
 		while True:

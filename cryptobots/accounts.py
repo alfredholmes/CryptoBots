@@ -17,6 +17,7 @@ class Order:
 		self.total_fees = {} #Fees paid, format {currency: fee}
 		self.fills = []
 		self.fill_event = asyncio.Event()
+		
 	
 	def update(self, update_type, data):	
 		balance_changes = {self.quote: 0, self.base: 0}
@@ -38,7 +39,6 @@ class Order:
 				self.fill_event.set()
 				self.open = False
 				self.completed = True
-			
 		
 		if update_type == 'CANCEL':
 			self.open = False
@@ -72,7 +72,7 @@ class Account:
 		self.order_update_queue = exchange.user_update_queue
 		self.parse_order_update_task = asyncio.create_task(self.parse_order_updates())	
 		self.orders = {}
-
+		self.unhandled_order_updates = {}
 	async def get_balance(self):
 		if self.balance is None:
 			self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key) 
@@ -96,14 +96,25 @@ class Account:
 				await self.get_balance()
 
 			order_update = await self.order_update_queue.get()
-			balance_changes = self.orders[order_update['id']].update(order_update['type'], order_update)
-			for currency, change in balance_changes.items():
-				if currency not in self.balance:
+			if order_update['id'] not in self.orders:
+				if order_update['id'] not in self.unhandled_order_updates:
+					self.unhandled_order_updates[order_update['id']] = []
+				self.unhandled_order_updates[order_update['id']].append(order_update)
+			else:
+				balance_changes = self.orders[order_update['id']].update(order_update['type'], order_update)
+				for currency, change in balance_changes.items():
+					if currency not in self.balance:
 					#It might be the case that the account balance api call only gets non zero balances
-					self.balance[currency] = 0
-				self.balance[currency] += change
-			self.order_update_queue.task_done()
-
+						self.balance[currency] = 0
+					self.balance[currency] += change
+				self.order_update_queue.task_done()
+	
+	def add_order(self, order):
+		if order.id in self.unhandled_order_updates:
+			for update in self.unhandled_order_updates[order.id]:
+				order.update(update['type'], update)
+		self.orders[order.id] = order
+	
 	async def market_order(self, base, quote, side, **kwargs):
 		if 'quote_volume' not in kwargs and 'volume' not in kwargs:
 			print('ERROR: missing required argument')
@@ -147,7 +158,7 @@ class FTXAccount(Account):
 		else:
 			order =  await exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key, self.subaccount)
 
-		self.orders[order.id] = order
+		self.add_order(order)
 		return order
 			
 	async def limit_order(self, base, quote, side, price, volume, **kwargs):
@@ -156,7 +167,7 @@ class FTXAccount(Account):
 		else:
 			exchange = self.exchange
 		response = await exchange.limit_order(base, quote, 'SELL', price, volume, self.api_key, self.secret_key, self.subaccount)
-		self.orders[response.id] = response
+		self.add_order(response)
 		return response
 	
 	async def get_balance(self):

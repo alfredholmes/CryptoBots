@@ -137,26 +137,29 @@ class Trader:
 		- portolio: Dict of the portfolio {asset: proportion}. Any currencies not added to the portfolio dict will be ignored, to trade out of an asset {asset: 0} needs to be in the dict.
 		- base: currency to calculate the portfolio weights in
 		- initial_portfolio - the assets which will be traded to be in the proportions of the target portfolio'''
-
-		assets = [asset for asset in set(portfolio).union(initial_portfolio)]
+		assets = [asset for asset in target_portfolio]
 		prices = self.prices(assets, quote)
-		total_value = sum(quote_values.values())	
 		if initial_portfolio is None:
-			initial_portfolio = self.account.balance
-		quote_values = self.portfolio_values(initial_portfolio, quote)
-		current_weighted_portfolio = np.array([quote_values[asset] / total_value for asset in assets])
-		target_portfolio = np.array([portfolio[asset] for asset in assets])
+			portfolio = dict(self.account.balance)
+		else:
+			portfolio = dict(initial_portfolio)
+		for asset in assets:
+			if asset not in portfolio:
+				portfolio[asset] = 0.0
 		
-
+		quote_values = self.portfolio_values(portfolio, quote)
+		total_value = sum(quote_values.values())	
+		current_weighted_portfolio = np.array([quote_values[asset] / total_value for asset in assets])
+		target_portfolio = np.array([target_portfolio[asset] for asset in assets])
+		initial_value = total_value 
 
 		target_portfolio /= np.sum(target_portfolio)
 		
 		sells = -np.min([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
 		
-		sell_actual = np.array([self.account.balance[asset] if asset in self.account.balance else 0 for asset in assets]) * sells / (current_weighted_portfolio + 10**-16)
+		sell_actual = np.array([portfolio[asset] for asset in assets]) * sells / (current_weighted_portfolio + 10**-16)
 		sell_assets = [(i, asset) for i, asset in enumerate(assets) if sells[i] > 0]
 
-		total_sells = np.sum(sells)
 		sell_orders = []
 
 
@@ -168,20 +171,26 @@ class Trader:
 				sell_orders.append((asset, volume))	
 		
 		#execute trades
+		print('Selling to USD...')
 		orders = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume, exchange=self.exchange) for base, volume in sell_orders])
 		await asyncio.gather(*[order.fill_event.wait() for order in orders])	
-		quote_values = self.portfolio_values(assets, quote)
+		for order in orders:
+			for price, volume in order.fills:
+				portfolio[order.base] -= volume
+				portfolio[order.quote] += price * volume
+			for currency, value in order.total_fees.items():
+				portfolio[currency] -= value
+		print('Done!')
+
+		quote_values = self.portfolio_values(portfolio, quote)
 		total_value = sum(quote_values.values())
 		
 		buys = np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
 		buy_assets = [(i, asset) for i, asset in enumerate(assets) if buys[i] > 0]
-		buys *= np.sum(sells) / total_sells #TODO: replace with actual aquired sales:	
-		
+		buys *= total_value / initial_value	
 		buy_orders = []
 		total_sold = 0
-		available_quote = self.account.balance[quote]
-
-		
+		available_quote = portfolio[quote]
 		for i, asset in buy_assets:
 			quote_volume = buys[i] * total_value
 			if total_sold + quote_volume > available_quote:
@@ -196,10 +205,22 @@ class Trader:
 				else:
 					buy_orders.append((asset, quote_volume))	
 					total_sold += quote_volume
-
+		print('Buying ...')
 		orders = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume, exchange=self.exchange) for asset, quote_volume in buy_orders])
-		await asyncio.gather(*[order.fill_event.wait() for order in orders])	
 		
+		await asyncio.gather(*[order.fill_event.wait() for order in orders])	
+		for order in orders:
+			for price, volume in order.fills:
+				portfolio[order.base] += volume
+				portfolio[order.quote] -= volume * price	
+			for currency, value in order.total_fees.items():
+				portfolio[currency] -= value
+		print('Done!')
+
+
+		print('Done trading!')
+
+		return portfolio
 		
 
 class SpotTrader(Trader):
