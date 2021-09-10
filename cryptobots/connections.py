@@ -20,7 +20,7 @@ class ConnectionManager:
 
 	async def __aenter__(self):	
 		if self.ws_uri is not None:
-			self.ws_client = await websockets.connect(self.ws_uri, ssl=True)
+			self.ws_client = await websockets.connect(self.ws_uri, ssl=True, compression=None)
 			self.ws_listener = asyncio.create_task(self.ws_listen())
 			self.subscribed_to_ws_stream = True
 		return self
@@ -40,8 +40,11 @@ class ConnectionManager:
 
 	async def ws_listen(self):
 		'''Listen to incoming ws messages and adds the data to the processing queue'''
-		async for message in self.ws_client:
-			await self.ws_q.put(json.loads(message))
+		try:
+			async for message in self.ws_client:
+				await self.ws_q.put(json.loads(message))
+		except Exception as e:
+			print('Error in Connection.ws_listen', e)
 
 	async def ws_send(self, data: dict):
 		'''Send data to the websocket server'''

@@ -533,46 +533,49 @@ class FTXSpot(Exchange):
 		return self.exchange_info
 	async def ws_parse(self):
 		while True:
-			message = await self.connection_manager.ws_q.get()
-			if message['type'] == 'error':
-				print('WS ERROR:', message)
-				self.connection_manager.ws_q.task_done()
-				raise Exception(message)
-			elif message['type'] == 'update':
-				if message['channel'] == 'orderbook':
+			try:
+				message = await self.connection_manager.ws_q.get()
+				if message['type'] == 'error':
+					print('WS ERROR:', message)
+					self.connection_manager.ws_q.task_done()
+					raise Exception(message)
+				elif message['type'] == 'update':
+					if message['channel'] == 'orderbook':
+						self.parse_order_book_update(message)
+						self.connection_manager.ws_q.task_done()	
+					if message['channel'] == 'orders':
+						message_data = message['data']
+						order_update = {
+							'type': 'UPDATE',
+							'id': message_data['id'],
+							'size': message_data['size'],
+							'price': message_data['price'] 
+						}
+						await self.user_update_queue.put(order_update)
+					if message['channel'] == 'fills':
+						message_data = message['data']
+						order_update = {
+							'type': 'FILL',
+							'id': message_data['orderId'],
+							'fees': {message_data['feeCurrency']: message_data['fee']},
+							'price': message_data['price'],
+							'volume': message_data['size']
+						}
+						await self.user_update_queue.put(order_update)
+				elif 'channel' in message and message['channel'] == 'orderbook' and message['type'] == 'partial':
 					self.parse_order_book_update(message)
-					self.connection_manager.ws_q.task_done()	
-				if message['channel'] == 'orders':
-					message_data = message['data']
-					order_update = {
-						'type': 'UPDATE',
-						'id': message_data['id'],
-						'size': message_data['size'],
-						'price': message_data['price'] 
-					}
-					await self.user_update_queue.put(order_update)
-				if message['channel'] == 'fills':
-					message_data = message['data']
-					order_update = {
-						'type': 'FILL',
-						'id': message_data['orderId'],
-						'fees': {message_data['feeCurrency']: message_data['fee']},
-						'price': message_data['price'],
-						'volume': message_data['size']
-					}
-					await self.user_update_queue.put(order_update)
-			elif 'channel' in message and message['channel'] == 'orderbook' and message['type'] == 'partial':
-				self.parse_order_book_update(message)
-			elif message['type'] == 'subscribed' and (message['channel'] == 'orders' or message['channel'] == 'fills'):
-				self.ws_authenticated = True
-				self.ws_authentication_response.set()
+				elif message['type'] == 'subscribed' and (message['channel'] == 'orders' or message['channel'] == 'fills'):
+					self.ws_authenticated = True
+					self.ws_authentication_response.set()
 				
-			elif message['type'] == 'subscribed':
-				self.connection_manager.ws_q.task_done()
-			elif message['type'] == 'pong':
-				pass
-			else:
-				print('Unhandled ws message', message)
+				elif message['type'] == 'subscribed':
+					self.connection_manager.ws_q.task_done()
+				elif message['type'] == 'pong':
+					pass
+				else:
+					print('Unhandled ws message', message)
+			except Exception as e:
+				print('Error in FTXSpot.ws_parse', e)
 
 
 	def parse_order_book_update(self, message):

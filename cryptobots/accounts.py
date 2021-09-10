@@ -36,9 +36,9 @@ class Order:
 				balance_changes[currency] -= fee
 
 			if self.remaining_volume <= 0:
-				self.fill_event.set()
 				self.open = False
 				self.completed = True
+				self.fill_event.set()
 		
 		if update_type == 'CANCEL':
 			self.open = False
@@ -92,22 +92,25 @@ class Account:
 	
 	async def parse_order_updates(self):
 		while True and self.exchange.connection_manager.open:
-			if self.balance is None:
-				await self.get_balance()
+			try:
+				if self.balance is None:
+					await self.get_balance()
 
-			order_update = await self.order_update_queue.get()
-			if order_update['id'] not in self.orders:
-				if order_update['id'] not in self.unhandled_order_updates:
-					self.unhandled_order_updates[order_update['id']] = []
-				self.unhandled_order_updates[order_update['id']].append(order_update)
-			else:
-				balance_changes = self.orders[order_update['id']].update(order_update['type'], order_update)
-				for currency, change in balance_changes.items():
-					if currency not in self.balance:
-					#It might be the case that the account balance api call only gets non zero balances
-						self.balance[currency] = 0
-					self.balance[currency] += change
+				order_update = await self.order_update_queue.get()
+				if order_update['id'] not in self.orders:
+					if order_update['id'] not in self.unhandled_order_updates:
+						self.unhandled_order_updates[order_update['id']] = []
+					self.unhandled_order_updates[order_update['id']].append(order_update)
+				else:
+					balance_changes = self.orders[order_update['id']].update(order_update['type'], order_update)
+					for currency, change in balance_changes.items():
+						if currency not in self.balance:
+						#It might be the case that the account balance api call only gets non zero balances
+							self.balance[currency] = 0
+						self.balance[currency] += change
 				self.order_update_queue.task_done()
+			except Exception as e:
+				print('Error in Account.parse_order_updates()', e)
 	
 	def add_order(self, order):
 		if order.id in self.unhandled_order_updates:
