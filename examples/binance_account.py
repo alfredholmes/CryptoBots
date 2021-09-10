@@ -19,7 +19,7 @@ from cryptobots.exchanges import BinanceSpot
 from cryptobots.accounts import Account 
 from cryptobots.trader import Trader
 import keys
-
+import datetime
 
 
 
@@ -34,7 +34,7 @@ async def main():
 		await account.get_balance()	
 		trader = Trader(account, binance, account.balance, [asset for asset in account.balance], ['BTC', 'USDT'])
 		await trader.get_trading_markets()	
-		print('BTC: ', sum(trader.portfolio_values(account.balance).values()), ' USDT:', sum(trader.portfolio_values(account.balance, 'USDT').values()))
+		print(datetime.datetime.now(), 'BTC: ', sum(trader.portfolio_values(account.balance).values()), ' USDT:', sum(trader.portfolio_values(account.balance, 'USDT').values()))
 
 if __name__=='__main__':
 	asyncio.run(main())
