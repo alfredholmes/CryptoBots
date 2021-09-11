@@ -42,9 +42,13 @@ class Exchange(ABC):
 	async def send_requests(self):
 		'''Method to send requests once they have been added to the request queue and the request won't go over the request limits'''
 		while True:
-			send_request, weights = await self.request_queue.get()
-			await self.wait_to_send_request(weights)
-			send_request.set()
+			try:
+				send_request, weights = await self.request_queue.get()
+				await self.wait_to_send_request(weights)
+				send_request.set()
+			except Exception as e:
+				print('Error in Exchange.send_request: ', e)
+				
 			
 
 
@@ -461,9 +465,12 @@ class FTXSpot(Exchange):
 	
 	async def ws_ping(self):
 		while self.connection_manager.open:
-			data = {'op': 'ping'}
-			await self.connection_manager.ws_send(data)
-			await asyncio.sleep(15 * 60)
+			try:
+				data = {'op': 'ping'}
+				await self.connection_manager.ws_send(data)
+				await asyncio.sleep(15 * 60)
+			except Exception as e:
+				print('Exception in FTXSpot.ws_ping', e)
 
 	def sign_headers(headers, api_key: str, secret_key: str, method: str, url: str, params: dict = None, subaccount = None ):
 		ts = int(time.time() * 1000)	
@@ -627,6 +634,7 @@ class FTXSpot(Exchange):
 			'size': float(base_volume)
 		}
 		response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
+		print(response)
 		if 'success' not in response or not response['success']:
 			raise Execption('Order placement failed' + str(response))
 		else:

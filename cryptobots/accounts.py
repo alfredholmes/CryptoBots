@@ -91,8 +91,8 @@ class Account:
 		
 	
 	async def parse_order_updates(self):
-		while True and self.exchange.connection_manager.open:
-			try:
+		try:
+			while True and self.exchange.connection_manager.open:
 				if self.balance is None:
 					await self.get_balance()
 
@@ -109,8 +109,8 @@ class Account:
 							self.balance[currency] = 0
 						self.balance[currency] += change
 				self.order_update_queue.task_done()
-			except Exception as e:
-				print('Error in Account.parse_order_updates()', e)
+		except Exception as e:
+			print('Error in Account.parse_order_updates():', e)
 	
 	def add_order(self, order):
 		if order.id in self.unhandled_order_updates:
