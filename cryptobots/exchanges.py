@@ -514,7 +514,7 @@ class FTXSpot(Exchange):
 	async def get_exchange_info(self, cache: bool = True):
 
 		self.limits.append(('REQUEST', 0.2, 3)) 
-		self.limits.append(('REQUEST', 1, 5))
+		self.limits.append(('REQUEST', 1, 3))
 		
 		async with self.exchange_info_lock: 
 			if self.exchange_info is not None and cache:
@@ -633,7 +633,6 @@ class FTXSpot(Exchange):
 			'type': 'market',
 			'size': float(base_volume)
 		}
-		print('sending request...')
 		try:
 			response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
 		except Exception as e:

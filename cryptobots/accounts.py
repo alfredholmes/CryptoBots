@@ -24,6 +24,7 @@ class Order:
 		if update_type == 'FILL':
 			volume_modifyer = 1 if self.side == 'BUY' else -1
 			self.remaining_volume -= data['volume']
+			print('Order', self.id, ' fill, remaining volume: ', self.remaining_volume) 
 			self.fills.append((data['price'], data['volume']))	
 			balance_changes[self.base] += volume_modifyer * data['volume']
 			balance_changes[self.quote] -= volume_modifyer * data['volume'] * data['price']	
