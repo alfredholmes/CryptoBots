@@ -37,7 +37,7 @@ class Order:
 				self.total_fees[currency] += fee
 				balance_changes[currency] -= fee
 
-			if self.remaining_volume <= 0:
+			if self.remaining_volume < 10**-5:
 				self.open = False
 				self.completed = True
 				self.fill_event.set()
