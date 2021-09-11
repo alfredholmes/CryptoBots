@@ -165,7 +165,9 @@ class FTXAccount(Account):
 			order = await exchange.market_order(base, quote, side, kwargs['volume'], self.api_key, self.secret_key, self.subaccount)
 		else:
 			order =  await exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key, self.subaccount)
-
+		if order is None:
+			#failed to place order...
+			return
 		self.add_order(order)
 		return order
 			

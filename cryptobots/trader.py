@@ -174,8 +174,11 @@ class Trader:
 		print('Selling to USD...')
 		orders = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume, exchange=self.exchange) for base, volume in sell_orders])
 		print('Waiting for orders to fill!')
-		await asyncio.gather(*[order.close_event.wait() for order in orders])	
-		for order in orders:
+		await asyncio.gather(*[order.close_event.wait() for order in orders if order is not None])	
+		for i, order in enumerate(orders):
+			if order is None:
+				print('Warning, failed to place sell order', sell_orders[i])
+				continue
 			for price, volume in order.fills:
 				portfolio[order.base] -= volume
 				portfolio[order.quote] += price * volume
@@ -209,8 +212,11 @@ class Trader:
 		print('Buying ...')
 		orders = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume, exchange=self.exchange) for asset, quote_volume in buy_orders])
 		print('Waiting for orders to fill...')	
-		await asyncio.gather(*[order.close_event.wait() for order in orders])	
-		for order in orders:
+		await asyncio.gather(*[order.close_event.wait() for order in orders if order is not None])	
+		for i, order in enumerate(orders):
+			if order is None:
+				print('Warning, failed to place sell order', buy_orders[i])
+				continue
 			for price, volume in order.fills:
 				portfolio[order.base] += volume
 				portfolio[order.quote] -= volume * price	
