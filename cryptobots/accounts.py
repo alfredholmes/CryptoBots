@@ -44,9 +44,10 @@ class Order:
 				self.close_event.set()
 			
 		
-		if update_type == 'CANCEL':
-			self.open = False
-			self.close_event.set()
+		if update_type == 'UPDATE':
+			if data['status'] == 'CLOSED':
+				self.open = False
+				self.close_event.set()
 		return balance_changes
 
 	def executed_price(self):

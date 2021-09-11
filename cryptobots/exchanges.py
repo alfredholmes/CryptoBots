@@ -556,7 +556,8 @@ class FTXSpot(Exchange):
 							'type': 'UPDATE',
 							'id': message_data['id'],
 							'size': message_data['size'],
-							'price': message_data['price'] 
+							'price': message_data['price'], 
+							'status': message_data['status'].upper()
 						}
 						await self.user_update_queue.put(order_update)
 					if message['channel'] == 'fills':
@@ -720,3 +721,19 @@ class FTXSpot(Exchange):
 				raise Exception('Failed to subscribe to orders stream')
 		else:
 			return self.user_update_queue
+	async def get_candles(self, quote, base, start_time, end_time, resolution=15):
+		possible_resolutions = [15, 60, 300, 900, 3600, 14400] + [(i + 1) * 86400 for i in range(30)]
+		if resolution not in possible_resolutions:
+			differences = [abs(res-resolution) for res in possible_resolutions]
+			resolution = possible_resolutions[differences.index(min(differences))]
+		request_data = {
+			'resolution': resolution,
+			'start_time': start_time,
+			'end_time': end_time
+		}
+		market = urllib.parse.quote(quote.upper() + '/'  + base.upper())
+		response = await self.submit_request(self.connection_manager.rest_get('/api/markets/' + market + '/candles', params=request_data)) 
+		candles = []
+		for candle in response['result']:
+			candles.append([int(candle['time'] / 1000), float(candle['open']), float(candle['close']), float(candle['high']), float(candle['low'])])	
+		return candles
