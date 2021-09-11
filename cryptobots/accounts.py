@@ -17,6 +17,7 @@ class Order:
 		self.total_fees = {} #Fees paid, format {currency: fee}
 		self.fills = []
 		self.fill_event = asyncio.Event()
+		self.close_event = asyncio.Event()
 		
 	
 	def update(self, update_type, data):	
@@ -40,9 +41,12 @@ class Order:
 				self.open = False
 				self.completed = True
 				self.fill_event.set()
+				self.close_event.set()
+			
 		
 		if update_type == 'CANCEL':
 			self.open = False
+			self.close_event.set()
 		return balance_changes
 
 	def executed_price(self):
