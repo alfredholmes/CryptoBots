@@ -727,14 +727,17 @@ class FTXSpot(Exchange):
 		if resolution not in possible_resolutions:
 			differences = [abs(res-resolution) for res in possible_resolutions]
 			resolution = possible_resolutions[differences.index(min(differences))]
-		request_data = {
-			'resolution': resolution,
-			'start_time': start_time,
-			'end_time': end_time
-		}
-		market = urllib.parse.quote(quote.upper() + '/'  + base.upper())
-		response = await self.submit_request(self.connection_manager.rest_get('/api/markets/' + market + '/candles', params=request_data)) 
+		limit = 1500
+		times = [(start_time + i * limit, start_time + (i + 1) * limit * resolution - 1) for i in range(int((end_time - start_time) / (limit * resolution)))]
 		candles = []
-		for candle in response['result']:
-			candles.append([int(candle['time'] / 1000), float(candle['open']), float(candle['close']), float(candle['high']), float(candle['low'])])	
+		for start_time, end_time in times:
+			request_data = {
+				'resolution': resolution,
+				'start_time': start_time,
+				'end_time': end_time
+			}
+			market = urllib.parse.quote(quote.upper() + '/'  + base.upper())
+			response = await self.submit_request(self.connection_manager.rest_get('/api/markets/' + market + '/candles', params=request_data)) 
+			for candle in response['result']:
+				candles.append([int(candle['time'] / 1000), float(candle['open']), float(candle['close']), float(candle['high']), float(candle['low'])])	
 		return candles
