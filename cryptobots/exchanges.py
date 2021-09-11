@@ -633,7 +633,12 @@ class FTXSpot(Exchange):
 			'type': 'market',
 			'size': float(base_volume)
 		}
-		response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
+		print('sending request...')
+		try:
+			response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
+		except Exception as e:
+			print('Exception in FTX.market_order', e)
+			return
 		print(response)
 		if 'success' not in response or not response['success']:
 			raise Execption('Order placement failed' + str(response))
