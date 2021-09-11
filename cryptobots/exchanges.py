@@ -557,7 +557,8 @@ class FTXSpot(Exchange):
 							'id': message_data['id'],
 							'size': message_data['size'],
 							'price': message_data['price'], 
-							'status': message_data['status'].upper()
+							'status': message_data['status'].upper(),
+							'filled_size': message_data['filledSize']
 						}
 						await self.user_update_queue.put(order_update)
 					if message['channel'] == 'fills':

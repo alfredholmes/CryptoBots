@@ -19,6 +19,7 @@ class Order:
 		self.fill_event = asyncio.Event()
 		self.close_event = asyncio.Event()
 		
+		self.reported_fill = None
 	
 	def update(self, update_type, data):	
 		balance_changes = {self.quote: 0, self.base: 0}
@@ -37,17 +38,17 @@ class Order:
 				self.total_fees[currency] += fee
 				balance_changes[currency] -= fee
 
-			if self.remaining_volume < 10**-5:
+			if self.remaining_volume < 10**-5 or (self.reported_fill is not None and self.reported_fill <= self.volume - self.remaining_volume):
 				self.open = False
 				self.completed = True
 				self.fill_event.set()
-				self.close_event.set()
 			
 		
 		if update_type == 'UPDATE':
 			if data['status'] == 'CLOSED':
 				self.open = False
 				self.close_event.set()
+				self.reported_fill = data['filled_size']
 		return balance_changes
 
 	def executed_price(self):
