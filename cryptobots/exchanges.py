@@ -514,7 +514,7 @@ class FTXSpot(Exchange):
 	async def get_exchange_info(self, cache: bool = True):
 
 		self.limits.append(('REQUEST', 0.2, 3)) 
-		self.limits.append(('REQUEST', 1, 3))
+		self.limits.append(('REQUEST', 1, 5))
 		
 		async with self.exchange_info_lock: 
 			if self.exchange_info is not None and cache:
@@ -639,7 +639,6 @@ class FTXSpot(Exchange):
 		except Exception as e:
 			print('Exception in FTX.market_order', e)
 			return
-		print(response)
 		if 'success' not in response or not response['success']:
 			raise Execption('Order placement failed' + str(response))
 		else:
