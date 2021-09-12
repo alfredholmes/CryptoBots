@@ -45,7 +45,7 @@ class Order:
 			
 		
 		if update_type == 'UPDATE':
-			if data['status'] == 'CLOSED':
+			if data['status'] == 'CLOSED' or data['status'] == 'CANCELLED':
 				self.open = False
 				self.close_event.set()
 				self.reported_fill = data['filled_size']
