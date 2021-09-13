@@ -49,7 +49,7 @@ class Order:
 				self.open = False
 				self.close_event.set()
 				self.reported_fill = data['filled_size']
-				if self.reported_fill <= self.volume - self.remaining_volume:
+				if self.reported_fill + 10**-5 <= self.volume - self.remaining_volume:
 					self.fill_event.set()
 				if self.reported_fill == 0.0:
 					print('Order canceled by exchange, no reason given')

@@ -467,12 +467,9 @@ class FTXSpot(Exchange):
 	
 	async def ws_ping(self):
 		while self.connection_manager.open:
-			try:
-				data = {'op': 'ping'}
-				await self.connection_manager.ws_send(data)
-				await asyncio.sleep(15 * 60)
-			except Exception as e:
-				print('Exception in FTXSpot.ws_ping', e)
+			data = {'op': 'ping'}
+			await self.connection_manager.ws_send(data)
+			await asyncio.sleep(15 * 60)
 
 	def sign_headers(headers, api_key: str, secret_key: str, method: str, url: str, params: dict = None, subaccount = None ):
 		ts = int(time.time() * 1000)	

@@ -50,9 +50,14 @@ class ConnectionManager:
 	async def ws_send(self, data: dict):
 		'''Send data to the websocket server'''
 		data['id'] = self.ws_id
-		
+			
 		self.ws_requests[self.ws_id] = {'data': data, 'response': None}
-		await self.ws_client.send(json.dumps(data))
+		try:
+			await self.ws_client.send(json.dumps(data))
+		except Exception as e:
+			self.subscribed_to_ws_stream = False
+			raise e
+			
 		self.ws_id += 1
 
 
