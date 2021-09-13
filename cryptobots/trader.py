@@ -148,7 +148,6 @@ class Trader:
 				portfolio[asset] = 0.0
 		
 		quote_values = self.portfolio_values(portfolio, quote)
-		print('quote values', quote_values)
 		total_value = sum(quote_values.values())	
 		current_weighted_portfolio = np.array([quote_values[asset] / total_value for asset in assets])
 		target_portfolio = np.array([target_portfolio[asset] for asset in assets])
@@ -157,15 +156,13 @@ class Trader:
 		target_portfolio /= np.sum(target_portfolio)
 		
 		sells = -np.min([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
-		
 		sell_actual = np.array([portfolio[asset] for asset in assets]) * sells / (current_weighted_portfolio + 10**-16)
 		sell_assets = [(i, asset) for i, asset in enumerate(assets) if sells[i] > 0]
-
 		sell_orders = []
 
 
 		for i, asset in sell_assets:	
-			volume = sell_actual[i] 
+			volume = sell_actual[i]
 			if volume < min([s.min_market_order() for s in self.sales[asset]]):
 				sells[i] = 0
 			elif (asset, quote) in self.trading_markets:

@@ -200,12 +200,14 @@ class MinMaxFilter(VolumeFilter):
 
 
 class FloatRenderer:
-	def __init__(self, precision, tick_size = None):
+	def __init__(self, precision, tick_size = None, return_float = False):
 		self.precision = int(precision)
 		self.tick_size = tick_size
+		self.return_float = return_float
 
-
-	def render(self, value: float) -> str:
+	def render(self, value: float):
+		if self.return_float:
+			return int(value / self.tick_size) * self.tick_size
 		if self.tick_size is None:
 			return ('{0:.' + str(self.precision) + 'f}').format(value)
 		n_ticks = int(value / self.tick_size)
@@ -476,7 +478,8 @@ class FTXSpot(Exchange):
 		ts = int(time.time() * 1000)	
 		payload = str(ts) + method.upper() +  url	
 		if params is not None:
-			payload += json.dumps(params)
+			order = [k for k, v in params.items() if v is not None]	
+			payload += json.dumps({k: params[k] for k in order})
 		headers['FTX-KEY'] = api_key
 		headers['FTX-SIGN'] = hmac.new(secret_key.encode(), payload.encode(), 'sha256').hexdigest()
 		headers['FTX-TS'] = str(ts)
@@ -535,8 +538,8 @@ class FTXSpot(Exchange):
 
 			self.volume_filters[(base, quote)] = {'LOT_SIZE': MinMaxFilter(MinMaxParameters(min_order, max_order)), 'MIN_NOTIONAL': MinNotionalFilter(MinNotionalParameters(0))}
 
-			self.volume_renderers[(base,quote)] = FloatRenderer(8, size_tick)
-			self.price_renderers[(base,quote)] = FloatRenderer(8, price_tick)
+			self.volume_renderers[(base,quote)] = FloatRenderer(8, size_tick, True)
+			self.price_renderers[(base,quote)] = FloatRenderer(8, price_tick, True)
 		return self.exchange_info
 	async def ws_parse(self):
 		while True:
@@ -631,7 +634,7 @@ class FTXSpot(Exchange):
 		request = {
 			'market': base + '/' + quote,
 			'side': side.lower(),
-			'price': 0,
+			'price': 1,
 			'type': 'market',
 			'size': float(base_volume)
 		}

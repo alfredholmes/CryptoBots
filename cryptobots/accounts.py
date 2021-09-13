@@ -45,10 +45,12 @@ class Order:
 			
 		
 		if update_type == 'UPDATE':
-			if data['status'] == 'CLOSED' or data['status'] == 'CANCELLED':
+			if data['status'] == 'CLOSED':
 				self.open = False
 				self.close_event.set()
 				self.reported_fill = data['filled_size']
+				if self.reported_fill <= self.volume - self.remaining_volume:
+					self.fill_event.set()
 		return balance_changes
 
 	def executed_price(self):
