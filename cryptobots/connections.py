@@ -69,7 +69,11 @@ class ConnectionManager:
 		params = {} if 'params' not in kwargs else kwargs['params']
 		headers = {} if 'headers' not in kwargs else kwargs['headers']
 		response =  await self.httpx_client.get(self.base_endpoint + endpoint, headers=headers, params=params) 
-		response.raise_for_status()
+		try:
+			response.raise_for_status()
+		except Exception as e:
+			print(e, response.text)
+			raise e
 		return json.loads(response.text)
 	
 
@@ -80,8 +84,13 @@ class ConnectionManager:
 		
 		response =  await self.httpx_client.post(self.base_endpoint + endpoint, json = params, headers = headers)	
 		response.request.read()
+		try:
+			response.raise_for_status()
+		except Exception as e:
+			print(e, response.text)
+			raise e
 
-		response.raise_for_status()
+
 		return json.loads(response.text)
 
 
