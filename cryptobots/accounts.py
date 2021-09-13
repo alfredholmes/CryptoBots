@@ -51,6 +51,8 @@ class Order:
 				self.reported_fill = data['filled_size']
 				if self.reported_fill <= self.volume - self.remaining_volume:
 					self.fill_event.set()
+				if self.reported_fill == 0.0:
+					print('Order canceled by exchange, no reason given')
 		return balance_changes
 
 	def executed_price(self):

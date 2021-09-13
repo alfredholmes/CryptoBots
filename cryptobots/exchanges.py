@@ -478,8 +478,7 @@ class FTXSpot(Exchange):
 		ts = int(time.time() * 1000)	
 		payload = str(ts) + method.upper() +  url	
 		if params is not None:
-			order = [k for k, v in params.items() if v is not None]	
-			payload += json.dumps({k: params[k] for k in order})
+			payload += json.dumps(params)
 		headers['FTX-KEY'] = api_key
 		headers['FTX-SIGN'] = hmac.new(secret_key.encode(), payload.encode(), 'sha256').hexdigest()
 		headers['FTX-TS'] = str(ts)
@@ -507,11 +506,6 @@ class FTXSpot(Exchange):
 			FTXSpot.sign_headers(headers, api_key, secret_key, 'POST', endpoint, params, kwargs['subaccount'])
 		if params is not None:
 			none_keys = []
-			for key, value in params.items():
-				if value is None:
-					none_keys.append(key)
-			for key in none_keys:
-				del params[key]
 		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers=headers), {'REQUEST': 1})
 
 	async def get_exchange_info(self, cache: bool = True):
@@ -634,7 +628,7 @@ class FTXSpot(Exchange):
 		request = {
 			'market': base + '/' + quote,
 			'side': side.lower(),
-			'price': 1,
+			'price': None,
 			'type': 'market',
 			'size': float(base_volume)
 		}
