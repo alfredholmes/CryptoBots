@@ -164,6 +164,8 @@ class Trader:
 
 
 		for i, asset in sell_assets:	
+			if asset == quote:
+				continue
 			volume = sell_actual[i] 
 			if volume < min([s.min_market_order() for s in self.sales[asset]]):
 				sells[i] = 0
@@ -196,6 +198,8 @@ class Trader:
 		total_sold = 0
 		available_quote = portfolio[quote]
 		for i, asset in buy_assets:
+			if asset == quote:
+				continue
 			quote_volume = buys[i] * total_value
 			if total_sold + quote_volume > available_quote:
 				quote_volume = available_quote - total_sold
