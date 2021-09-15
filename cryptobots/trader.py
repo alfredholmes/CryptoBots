@@ -16,6 +16,7 @@ class TradingSale:
 		self.min_order = min_order
 		self.max_order = max_order
 		self.min_notional = min_notional
+		
 
 		if quote_asset != sell_asset and quote_asset != buy_asset:
 			print('Error, the quote asset is neither the buy nor sell asset')
@@ -26,6 +27,7 @@ class TradingSale:
 			#calculate quote volume of min order
 			min_order_price = self.order_book.market_sell_price(self.min_order)
 			min_order_quote_volume = self.min_order * min_order_price
+			
 			return max(self.min_notional, min_order_quote_volume)
 		else:
 			#calculate volume of min notional
@@ -85,35 +87,35 @@ class Trader:
 
 		await self.exchange.subscribe_to_order_books([(base, quote) for base, quote in symbols])
 
-	def prices(self, assets: list = None, base='BTC'):
-		'''Calculate the prices of an asset with respect to the base. The trading pairs need not exist'''
+	def prices(self, assets: list = None, quote='BTC'):
+		'''Calculate the prices of an asset with respect to the quote. The trading pairs need not exist'''
 		if assets is None:
 			assets = self.account.balance
 		assets = [asset for asset in assets]
 		asset_prices = np.zeros(len(assets))
 		for i, asset in enumerate(assets):
 			amount = 0
-			price = 0 if asset != base else 1
-			if asset != base:
-				if (asset, base) in self.trading_markets:
-					price = self.exchange.order_books[(asset, base)].mid_price()
-				elif (base, asset) in self.trading_markets:
-					price = 1 / self.exchange.order_books[(base, asset)].mid_price()
+			price = 0 if asset != quote else 1.0
+			if asset != quote:
+				if (asset, quote) in self.trading_markets:
+					price = self.exchange.order_books[(asset, quote)].mid_price()
+				elif (quote, asset) in self.trading_markets:
+					price = 1 / self.exchange.order_books[(quote, asset)].mid_price()
 				else:
 					prices = []
 					for middle_asset in self.account.balance:
-						if (middle_asset, base) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
-							prices.append(self.exchange.order_books[(asset, middle_asset)].mid_price() * self.exchange.order_books[(middle_asset,base)].mid_price())
-						if (base, middle_asset) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
-							prices.append(self.exchange.order_books[(asset,middle_asset)].mid_price() * 1 / self.exchange.order_books[(base, middle_asset)].mid_price())
-						if (middle_asset, base) in self.trading_markets and ( middle_asset, asset) in self.trading_markets:
-							prices.append(1 / self.exchange.order_books[( middle_asset, asset)].mid_price() *self.exchange.order_books[(middle_asset,base)].mid_price())
-						if (base, middle_asset) in self.trading_markets and (middle_asset, asset) in self.trading_markets:
-							prices.append(1 / self.exchange.order_books[(middle_asset, asset)].mid_price() * 1 / self.exchange.order_books[(base,middle_asset)].mid_price())
+						if (middle_asset, quote) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
+							prices.append(self.exchange.order_books[(asset, middle_asset)].mid_price() * self.exchange.order_books[(middle_asset,quote)].mid_price())
+						if (quote, middle_asset) in self.trading_markets and (asset, middle_asset) in self.trading_markets:
+							prices.append(self.exchange.order_books[(asset,middle_asset)].mid_price() * 1 / self.exchange.order_books[(quote, middle_asset)].mid_price())
+						if (middle_asset, quote) in self.trading_markets and ( middle_asset, asset) in self.trading_markets:
+							prices.append(1 / self.exchange.order_books[( middle_asset, asset)].mid_price() *self.exchange.order_books[(middle_asset,quote)].mid_price())
+						if (quote, middle_asset) in self.trading_markets and (middle_asset, asset) in self.trading_markets:
+							prices.append(1 / self.exchange.order_books[(middle_asset, asset)].mid_price() * 1 / self.exchange.order_books[(quote,middle_asset)].mid_price())
 					if len(prices) != 0:
 						price = np.mean(prices)
 					else:
-						print('Trading error, no route!', asset, base)
+						print('Trading error, no route!', asset, quote)
 			asset_prices[i] = price	 
 		return {a: asset_prices[i] for i, a in enumerate(assets)}
 	
@@ -156,7 +158,10 @@ class Trader:
 		target_portfolio /= np.sum(target_portfolio)
 		
 		sells = -np.min([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
-		sell_actual = np.array([portfolio[asset] for asset in assets]) * sells / (current_weighted_portfolio + 10**-16)
+		sell_actual = np.zeros(len(assets))
+		for i, asset in enumerate(assets):
+			if current_weighted_portfolio[i] > 0:
+				sell_actual[i] = portfolio[asset] * sells[i] / current_weighted_portfolio[i]
 		sell_assets = [(i, asset) for i, asset in enumerate(assets) if sells[i] > 0]
 		sell_orders = []
 
@@ -165,6 +170,7 @@ class Trader:
 			volume = sell_actual[i]
 			if volume < min([s.min_market_order() for s in self.sales[asset]]):
 				sells[i] = 0
+				print(asset, 'sale ', volume, 'below min order')
 			elif (asset, quote) in self.trading_markets:
 				sell_orders.append((asset, volume))	
 		

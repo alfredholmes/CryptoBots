@@ -45,6 +45,8 @@ class ConnectionManager:
 				await self.ws_q.put(json.loads(message))
 		except Exception as e:
 			print('Error in Connection.ws_listen', e)
+			self.open = False
+			raise Exception
 		print('ws_listen finished: ws dissconnected')
 
 	async def ws_send(self, data: dict):

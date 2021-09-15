@@ -38,7 +38,7 @@ class Order:
 				self.total_fees[currency] += fee
 				balance_changes[currency] -= fee
 
-			if self.remaining_volume < 10**-5 or (self.reported_fill is not None and self.reported_fill <= self.volume - self.remaining_volume):
+			if self.remaining_volume < 10**-5 or (self.reported_fill is not None and self.reported_fill - 10**-5 <= self.volume - self.remaining_volume):
 				self.open = False
 				self.completed = True
 				self.fill_event.set()
@@ -49,7 +49,7 @@ class Order:
 				self.open = False
 				self.close_event.set()
 				self.reported_fill = data['filled_size']
-				if self.reported_fill + 10**-5 <= self.volume - self.remaining_volume:
+				if self.reported_fill - 10**-5 <= self.volume - self.remaining_volume:
 					self.fill_event.set()
 				if self.reported_fill == 0.0:
 					print('Order canceled by exchange, no reason given')
