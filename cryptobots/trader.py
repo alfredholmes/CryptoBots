@@ -233,7 +233,7 @@ class Trader:
 
 		print('Done trading!')
 
-		return portfolio
+		return {asset: round(new_balance, 8) for asset, new_balance in portfolio.items()}
 		
 
 class SpotTrader(Trader):
