@@ -722,7 +722,7 @@ class FTXSpot(Exchange):
 			differences = [abs(res-resolution) for res in possible_resolutions]
 			resolution = possible_resolutions[differences.index(min(differences))]
 		limit = 1500
-		times = [(start_time + i * limit, start_time + (i + 1) * limit * resolution - 1) for i in range(int((end_time - start_time) / (limit * resolution)))]
+		times = [(start_time + i * limit, start_time + (i + 1) * limit * resolution - 1) for i in range(int((end_time - start_time) / (limit * resolution))+ 1)]
 		candles = []
 		for start_time, end_time in times:
 			request_data = {
