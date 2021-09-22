@@ -157,7 +157,7 @@ class Trader:
 		current_weighted_portfolio = np.array([quote_values[asset] / total_value for asset in assets])
 		target_portfolio = np.array([target_portfolio[asset] for asset in assets])
 		initial_value = total_value 
-		if initial_value = 0.0:
+		if initial_value == 0.0:
 			return dict()
 		target_portfolio /= np.sum(target_portfolio)
 		
