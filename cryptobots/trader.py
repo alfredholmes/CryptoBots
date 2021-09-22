@@ -132,7 +132,7 @@ class Trader:
 		total = sum(base_values.values())
 		return {asset: value / total for asset, value in base_values.items()}
 
-	async def trade_to_portfolio_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None, trading_fee=0):
+	async def trade_to_portfolio_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None, submitted_orders: list = None):
 		'''Trade to rebalance the accounts portfolio to the portfolio parameter. 
 
 		args:
@@ -148,6 +148,9 @@ class Trader:
 		for asset in assets:
 			if asset not in portfolio:
 				portfolio[asset] = 0.0
+
+		if submitted_orders is None:
+			submitted_orders = []
 		
 		quote_values = self.portfolio_values(portfolio, quote)
 		total_value = sum(quote_values.values())	
@@ -177,17 +180,18 @@ class Trader:
 		#execute trades
 		print('Selling to USD...')
 		orders = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume, exchange=self.exchange) for base, volume in sell_orders])
+		submitted_orders.extend(orders)
 		print('Waiting for orders to fill!')
 		await asyncio.gather(*[order.fill_event.wait() for order in orders if order is not None])	
 		for i, order in enumerate(orders):
 			if order is None:
 				print('Warning, failed to place sell order', sell_orders[i])
 				continue
-			for price, volume in order.fills:
-				portfolio[order.base] -= volume
-				portfolio[order.quote] += price * volume
-			for currency, value in order.total_fees.items():
-				portfolio[currency] -= value
+			for changes in order.fills.values():
+				for asset, change in changes.items():
+					if asset not in portfolio:
+						portfolio[asset] = 0.0
+					portfolio[asset] += change
 		print('Done!')
 
 		quote_values = self.portfolio_values(portfolio, quote)
@@ -217,19 +221,18 @@ class Trader:
 					total_sold += quote_volume
 		print('Buying ...')
 		orders = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume, exchange=self.exchange) for asset, quote_volume in buy_orders])
+		submitted_orders.extend(orders)
 		print('Waiting for orders to fill...')	
 		await asyncio.gather(*[order.fill_event.wait() for order in orders if order is not None])	
 		for i, order in enumerate(orders):
 			if order is None:
 				print('Warning, failed to place sell order', buy_orders[i])
 				continue
-			for price, volume in order.fills:
-				portfolio[order.base] += volume
-				portfolio[order.quote] -= volume * price	
-			for currency, value in order.total_fees.items():
-				portfolio[currency] -= value
+			for changes in order.fills.values():
+				for asset, change in changes.items():
+					if asset not in portfolio:
+						portfolio[asset] = 0.0
 		print('Done!')
-
 
 		print('Done trading!')
 

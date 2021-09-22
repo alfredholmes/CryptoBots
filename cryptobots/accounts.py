@@ -15,7 +15,7 @@ class Order:
 		self.completed = False	
 		self.filled_volume = 0 #Total order volume (including fees)
 		self.total_fees = {} #Fees paid, format {currency: fee}
-		self.fills = []
+		self.fills = {}
 		self.fill_event = asyncio.Event()
 		self.close_event = asyncio.Event()
 		
@@ -24,10 +24,11 @@ class Order:
 	def update(self, update_type, data):	
 		balance_changes = {self.quote: 0, self.base: 0}
 		if update_type == 'FILL':
+			if data['trade_id'] in self.fills:
+				return balance_changes
 			volume_modifyer = 1 if self.side == 'BUY' else -1
 			self.remaining_volume -= data['volume']
-			print('Order', self.id, ' fill, remaining volume: ', self.remaining_volume) 
-			self.fills.append((data['price'], data['volume']))	
+			print('Order', self.id, self.base, self.quote, ' fill, remaining volume: ', self.remaining_volume) 
 			balance_changes[self.base] += volume_modifyer * data['volume']
 			balance_changes[self.quote] -= volume_modifyer * data['volume'] * data['price']	
 			for currency, fee in data['fees'].items():
@@ -37,6 +38,7 @@ class Order:
 					balance_changes[currency] = 0
 				self.total_fees[currency] += fee
 				balance_changes[currency] -= fee
+				self.fills[data['trade_id']] = dict(balance_changes)	
 
 			if self.remaining_volume < 10**-5 or (self.reported_fill is not None and self.reported_fill - 10**-5 <= self.volume - self.remaining_volume):
 				self.open = False
@@ -55,12 +57,6 @@ class Order:
 					print('Order canceled by exchange, no reason given')
 		return balance_changes
 
-	def executed_price(self):
-		if len(self.fills) == 0:
-			return 0
-		
-		quote_value_exchanged = np.sum([price * volume for price, volume in self.fills]) 
-		return quote_value_exchanged / np.sum([volume for price, volume in self.fills])
 
 
 class LimitOrder(Order):
@@ -96,7 +92,14 @@ class Account:
 				r += '\n'
 
 		return r 	
-		
+	
+	def remove_closed_orders(self):
+		to_delete = []
+		for order_id, order in self.orders.items():
+			if not order.open:
+				to_delete.append(order_id)
+		for order_id in to_delete:
+			del self.orders[order_id]
 	async def get_open_orders(self):
 		pass	
 		
@@ -128,6 +131,18 @@ class Account:
 			for update in self.unhandled_order_updates[order.id]:
 				order.update(update['type'], update)
 		self.orders[order.id] = order
+	
+	async def refresh_fills(self, start_time):
+		fills =  await self.exchange.get_order_fills(start_time, self.api_key, self.secret_key)
+		for fill in fills:
+			if fill['id'] not in self.orders:
+				print('Error in account class, orders out of sync!')
+				#need to update orders
+			elif fill['trade_id'] not in self.orders[fill['id']]:
+				self.orders[fill['id']].update('FILL', fill)
+			
+
+					
 	
 	async def market_order(self, base, quote, side, **kwargs):
 		if 'quote_volume' not in kwargs and 'volume' not in kwargs:

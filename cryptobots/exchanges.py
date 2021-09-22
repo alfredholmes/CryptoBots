@@ -559,6 +559,7 @@ class FTXSpot(Exchange):
 						message_data = message['data']
 						order_update = {
 							'type': 'FILL',
+							'trade_id': message_data['id'],
 							'id': message_data['orderId'],
 							'fees': {message_data['feeCurrency']: message_data['fee']},
 							'price': message_data['price'],
@@ -616,7 +617,19 @@ class FTXSpot(Exchange):
 		
 	async def get_depth_snapshots(sef, *symbols):
 		pass
-
+	async def get_order_fills(self, start_time, api_key, secret_key):
+		fills =  await self.signed_get('/api/fills', api_key, secret_key, params={'start_time': start_time})
+		if not fills['success']:
+			print('Error getting order fills')
+			raise Exception('Order fill request failed')	
+		data = []
+		for fill in fills['result']:
+			price = fill['price']
+			volume = fill['size']
+			fees = {fill['feeCurrency']: fill['fee']}
+			trade_id = fill['id']
+			order_id = fill['orderId']
+			data.append({'price': price, 'volume': volume, 'fees': fees, 'trade_id': trade_id, 'id': order_id})
 	async def market_order(self, base, quote, side, base_volume, api_key, secret_key, subaccount = None):
 		for volume_filter in self.volume_filters[(base, quote)].values():
 			base_volume = volume_filter.filter(base_volume, self.order_books[(base, quote)].market_buy_price(base_volume))
