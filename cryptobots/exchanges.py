@@ -630,6 +630,8 @@ class FTXSpot(Exchange):
 			trade_id = fill['id']
 			order_id = fill['orderId']
 			data.append({'price': price, 'volume': volume, 'fees': fees, 'trade_id': trade_id, 'id': order_id})
+	
+
 	async def market_order(self, base, quote, side, base_volume, api_key, secret_key, subaccount = None):
 		for volume_filter in self.volume_filters[(base, quote)].values():
 			base_volume = volume_filter.filter(base_volume, self.order_books[(base, quote)].market_buy_price(base_volume))

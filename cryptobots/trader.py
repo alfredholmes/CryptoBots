@@ -132,7 +132,14 @@ class Trader:
 		total = sum(base_values.values())
 		return {asset: value / total for asset, value in base_values.items()}
 
-	async def trade_to_portfolio_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None, submitted_orders: list = None):
+	async def trade_to_portfolio_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
+		assets = [asset for asset in target_portfolio]
+		prices = self.prices(assets, quote)
+		weighted_portfolio = {asset: value * prices[asset] for asset, value in target_portfolio.items()}
+		return await self.trade_to_portfolio_weighted_market(target_portfolio, quote, initial_portfolio)
+
+
+	async def trade_to_portfolio_weighted_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
 		'''Trade to rebalance the accounts portfolio to the portfolio parameter. 
 
 		args:
@@ -149,8 +156,6 @@ class Trader:
 			if asset not in portfolio:
 				portfolio[asset] = 0.0
 
-		if submitted_orders is None:
-			submitted_orders = []
 		
 		quote_values = self.portfolio_values(portfolio, quote)
 		total_value = sum(quote_values.values())	
@@ -181,7 +186,6 @@ class Trader:
 		#execute trades
 		print('Selling to USD...')
 		orders = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume, exchange=self.exchange) for base, volume in sell_orders])
-		submitted_orders.extend(orders)
 		print('Waiting for orders to fill!')
 		await asyncio.gather(*[order.fill_event.wait() for order in orders if order is not None])	
 		for i, order in enumerate(orders):
@@ -222,7 +226,6 @@ class Trader:
 					total_sold += quote_volume
 		print('Buying ...')
 		orders = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume, exchange=self.exchange) for asset, quote_volume in buy_orders])
-		submitted_orders.extend(orders)
 		print('Waiting for orders to fill...')	
 		await asyncio.gather(*[order.fill_event.wait() for order in orders if order is not None])	
 		for i, order in enumerate(orders):
