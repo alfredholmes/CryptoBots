@@ -111,17 +111,25 @@ class Account:
 					await self.get_balance()
 
 				order_update = await self.order_update_queue.get()
+				if order_update['type'] == 'FILL':
+					volume_modifyer = 1 is order_update['side'] == 'BUY' else -1:
+					base, quote = order_update['market'] 	
+					if base not in self.balance:
+						self.balance[base] = 0.0
+					if quote not in self.balance:
+						self.balance[quote] = 0.0
+					self.balance[base] += volume_modifyer * order_update['volume']
+					self.balance[quote] -= volume_modifyer * order_update['volume'] * order_update['price']
+					for fee_currency, fee in order_update['fees'].items():
+						if fee_currency not in self.balance:
+							self.balance[fee_currency] = 0.0
+						self.balance[fee_currency] -= fee
 				if order_update['id'] not in self.orders:
 					if order_update['id'] not in self.unhandled_order_updates:
 						self.unhandled_order_updates[order_update['id']] = []
 					self.unhandled_order_updates[order_update['id']].append(order_update)
 				else:
-					balance_changes = self.orders[order_update['id']].update(order_update['type'], order_update)
-					for currency, change in balance_changes.items():
-						if currency not in self.balance:
-						#It might be the case that the account balance api call only gets non zero balances
-							self.balance[currency] = 0
-						self.balance[currency] += change
+					self.orders[order_update['id']].update(order_update['type'], order_update)
 				self.order_update_queue.task_done()
 		except Exception as e:
 			print('Error in Account.parse_order_updates():', e)

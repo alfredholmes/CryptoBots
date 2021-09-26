@@ -563,7 +563,9 @@ class FTXSpot(Exchange):
 							'id': message_data['orderId'],
 							'fees': {message_data['feeCurrency']: message_data['fee']},
 							'price': message_data['price'],
-							'volume': message_data['size']
+							'volume': message_data['size'],
+							'side': message_data['side'].upper(),
+							'market': self.trading_symbols[message_data['market']] 
 						}
 						await self.user_update_queue.put(order_update)
 				elif 'channel' in message and message['channel'] == 'orderbook' and message['type'] == 'partial':
