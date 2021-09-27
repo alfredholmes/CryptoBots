@@ -522,6 +522,7 @@ class FTXSpot(Exchange):
 			base = market['baseCurrency']
 			quote = market['quoteCurrency']
 			self.trading_markets.append((base, quote))
+			self.trading_symbols[market['name']] = (base, quote)
 			min_order = market['minProvideSize'] 
 			max_order = np.inf
 			price_tick = market['priceIncrement']
@@ -581,6 +582,8 @@ class FTXSpot(Exchange):
 				else:
 					print('Unhandled ws message', message)
 			except Exception as e:
+				import traceback
+				traceback.print_exc()
 				print('Error in FTXSpot.ws_parse', e)
 
 

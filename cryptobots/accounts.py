@@ -81,8 +81,7 @@ class Account:
 		self.orders = {}
 		self.unhandled_order_updates = {}
 	async def get_balance(self):
-		if self.balance is None:
-			self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key) 
+		self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key) 
 	
 	def __str__(self):
 		r = ''	
@@ -112,7 +111,7 @@ class Account:
 
 				order_update = await self.order_update_queue.get()
 				if order_update['type'] == 'FILL':
-					volume_modifyer = 1 is order_update['side'] == 'BUY' else -1:
+					volume_modifyer = 1 if order_update['side'] == 'BUY' else -1
 					base, quote = order_update['market'] 	
 					if base not in self.balance:
 						self.balance[base] = 0.0
