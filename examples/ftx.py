@@ -17,6 +17,7 @@ sys.path.append("./")
 from cryptobots.connections import ConnectionManager
 from cryptobots.exchanges import FTXSpot
 from cryptobots.accounts import FTXAccount 
+from cryptobots.trader import Trader
 import keys_ftx as keys
 
 
@@ -31,12 +32,18 @@ async def main():
 
 		account = FTXAccount(keys.API, keys.SECRET, ftx, keys.SUBACCOUNT) 
 		await account.subscribe_to_user_data()
-		
+			
 		print(account)
-		#print('Buying 10 dollars worth of BTC with USD')
-		#await account.market_order('BTC', 'USD', 'BUY', quote_volume=10)
-		#await asyncio.sleep(0.1) #sleep to allow orders to process
-		#print(account)
+		assets = ['BTC', 'ETH', 'SOL', 'USD']
+		
+		trader = Trader(account, ftx, assets, ['USD'])
+		await trader.get_trading_markets()
+		target_portfolio = {'BTC': 0.3, 'ETH': 0.2, 'SOL': 0.5, 'USD': 0.0}
+		#target_portfolio = {'BTC': 1.0, 'ETH': 0.0, 'SOL': 0.0, 'USD': 0.0}
+
+
+
+		await trader.trade_to_portfolio(target_portfolio, 'USD')
 
 if __name__=='__main__':
 	asyncio.run(main())

@@ -138,24 +138,14 @@ class Trader:
 		weighted_portfolio = {asset: value * prices[asset] for asset, value in target_portfolio.items()}
 		return await self.trade_to_portfolio_weighted_market(target_portfolio, quote, initial_portfolio)
 
-
-	async def trade_to_portfolio_weighted_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
-		'''Trade to rebalance the accounts portfolio to the portfolio parameter. 
-
-		args:
-		- portolio: Dict of the portfolio {asset: proportion}. Any currencies not added to the portfolio dict will be ignored, to trade out of an asset {asset: 0} needs to be in the dict.
-		- base: currency to calculate the portfolio weights in
-		- initial_portfolio - the assets which will be traded to be in the proportions of the target portfolio'''
+	def process_portfolios(self, target_portfolio, quote, initial_portfolio):
+		
 		assets = [asset for asset in target_portfolio]
 		prices = self.prices(assets, quote)
 		if initial_portfolio is None:
-			portfolio = dict(self.account.balance)
+			portfolio = {asset: self.account.balance[asset] if asset in self.account.balance else 0.0 for asset in assets}
 		else:
-			portfolio = dict(initial_portfolio)
-		for asset in assets:
-			if asset not in portfolio:
-				portfolio[asset] = 0.0
-
+			portfolio = {asset: initial_portfolio[asset] if asset in self.portfolio else 0.0 for asset in assets}
 		
 		quote_values = self.portfolio_values(portfolio, quote)
 		total_value = sum(quote_values.values())	
@@ -166,14 +156,17 @@ class Trader:
 			return {asset: 0.0 for asset in assets}
 		target_portfolio /= np.sum(target_portfolio)
 		
+		return assets, prices, portfolio, target_portfolio, current_weighted_portfolio
+
+	def calculate_sell_orders(self, assets,quote, target_portfolio, current_weighted_portfolio, portfolio):
 		sells = -np.min([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
 		sell_actual = np.zeros(len(assets))
 		for i, asset in enumerate(assets):
 			if current_weighted_portfolio[i] > 0:
 				sell_actual[i] = portfolio[asset] * sells[i] / current_weighted_portfolio[i]
 		sell_assets = [(i, asset) for i, asset in enumerate(assets) if sells[i] > 0]
+		
 		sell_orders = []
-
 
 		for i, asset in sell_assets:	
 			volume = sell_actual[i]
@@ -183,6 +176,45 @@ class Trader:
 			elif (asset, quote) in self.trading_markets:
 				sell_orders.append((asset, volume))	
 		
+		return sell_orders
+
+
+	def calculate_buy_orders(self, assets, quote, target_portfolio, current_weighted_portfolio, total_value):	
+		buys = np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
+		buy_assets = [(i, asset) for i, asset in enumerate(assets) if buys[i] > 0]
+		buy_orders = []
+		minimum_orders = []
+		total_sold = 0
+		for i, asset in buy_assets:
+			if asset == quote:
+				continue
+			quote_volume = buys[i] * total_value
+			
+			if (asset, quote) in self.trading_markets:
+				for s in self.sales[quote]:
+					if s.buy_asset == asset:
+						sale = s
+				min_market_order = sale.min_market_order()
+				if quote_volume < min_market_order:
+					buys[i] = 0
+				else:
+					buy_orders.append((asset, quote_volume))	
+					total_sold += quote_volume
+					minimum_orders.append((asset, min_market_order))
+
+
+		return buy_orders, minimum_orders
+			
+
+	async def trade_to_portfolio_weighted_market(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
+		'''Trade to rebalance the accounts portfolio to the portfolio parameter. 
+
+		args:
+		- portolio: Dict of the portfolio {asset: proportion}. Any currencies not added to the portfolio dict will be ignored, to trade out of an asset {asset: 0} needs to be in the dict.
+		- base: currency to calculate the portfolio weights in
+		- initial_portfolio - the assets which will be traded to be in the proportions of the target portfolio'''
+		assets, prices, portfolio, target_portfolio, current_weighted_portfolio = self.process_portfolios(target_portfolio, quote, initial_portfolio)
+		sell_orders = self.calculate_sell_orders(assets, quote, target_portfolio, current_weighted_portfolio, portfolio)	
 		#execute trades
 		print('Selling to USD...')
 		orders = await asyncio.gather(*[self.account.market_order(base, quote, 'SELL', volume=volume, exchange=self.exchange) for base, volume in sell_orders])
@@ -201,29 +233,24 @@ class Trader:
 
 		quote_values = self.portfolio_values(portfolio, quote)
 		total_value = sum(quote_values.values())
+	
+		buy_orders, min_orders = self.calculate_buy_orders(assets, quote, target_portfolio, current_weighted_portfolio, total_value)
 		
-		buys = np.max([target_portfolio - current_weighted_portfolio, np.zeros(target_portfolio.size)], axis=0)
-		buy_assets = [(i, asset) for i, asset in enumerate(assets) if buys[i] > 0]
-		buys *= total_value / initial_value	
-		buy_orders = []
-		total_sold = 0
-		available_quote = portfolio[quote]
-		for i, asset in buy_assets:
-			if asset == quote:
-				continue
-			quote_volume = buys[i] * total_value
-			if total_sold + quote_volume > available_quote:
-				quote_volume = available_quote - total_sold
+		total_quote_volume = portfolio[quote]
+		spent_volume = 0
+		to_delete = []
+		for i in range(len(buy_orders)):
+			if buy_orders[i][1] + spent_volume < total_quote_volume:
+				spent_volume += buy_orders[i][1]
+			elif spent_volume < total_quote_volume and total_quote_volume - spent_volume > min_orders[i]:
+				buy_orders[i] = (buy_ordes[i][0], total_quote_volume - spent_volume)
+				spent_volume += total_quote_volume - spent_volume
+			else:
+				to_delete.append(i)	
 			
-			if (asset, quote) in self.trading_markets:
-				for s in self.sales[quote]:
-					if s.buy_asset == asset:
-						sale = s
-				if quote_volume < sale.min_market_order():
-					buys[i] = 0
-				else:
-					buy_orders.append((asset, quote_volume))	
-					total_sold += quote_volume
+		for i in reversed(to_delete):
+			del buy_orders[i]	
+
 		print('Buying ...')
 		orders = await asyncio.gather(*[self.account.market_order(asset, quote, 'BUY', quote_volume=quote_volume, exchange=self.exchange) for asset, quote_volume in buy_orders])
 		print('Waiting for orders to fill...')	
@@ -241,7 +268,109 @@ class Trader:
 		print('Done trading!')
 
 		return {asset: round(new_balance, 8) for asset, new_balance in portfolio.items()}
+
+	async def limit_trade(self, base, quote, side, volume, fill_queue = None, timeout=10):
+		target_volume = volume
+		mid_price = self.prices([base], quote)[base]
+		if side == 'BUY' and target_volume * mid_price > self.account.balance[quote]:
+			volume = self.account.balance[quote] / mid_price
+		elif side == 'SELL' and target_volume > self.account.balance[base]:
+			volume = self.account.balance[base]
+		if fill_queue is not None:
+			print('posting limit order')
+			order = await self.account.limit_order(base, quote, side, mid_price, volume, fill_queue=fill_queue, exchange=self.exchange)
+		else:
+			order = await self.account.limit_order(base, quote, side, mid_price, volume, exchange=self.exchange)
+
+		start_time = time.time()
+		while order.open:
+			print('Order is open', order.id)
+			if time.time() - start_time > timeout:
+				break
+			await asyncio.sleep(1) 
+			mid_price = self.prices([base], quote)[base]
+			target_volume = order.remaining_volume
+			if side == 'BUY' and target_volume * mid_price > self.account.balance[quote]:
+				volume = self.account.balance[quote] / mid_price
+			elif side == 'SELL' and target_volume > self.account.balance[base]:
+				volume = self.account.balance[base]
+			await self.account.change_order(order, price=mid_price)
+	
+		if order.open:
+			await self.account.cancel_order(order)
+			try:
+				await asyncio.wait_for(order.close_event.wait(), timeout)
+			except asyncio.TimeoutError:
+				print('Order cencellation timeout error', order.id, order.base, order.quote, order.price)
+
+
+	async def create_sell_order_tasks(self, orders, quote, complete_event, fill_queue):
+		print('Here!', orders)	
+		tasks = []
+		for base, volume in orders:
+			print('requesting limit orders...')
+			tasks.append(asyncio.create_task(self.limit_trade(base, quote, 'SELL', volume, fill_queue)))
+		try:	
+			await asyncio.wait_for(asyncio.gather(*tasks), 15)
+		except asyncio.TimeoutError:
+			print('Timeout Error in sell order tasks')
+		print('setting complete event!')
+		complete_event.set()
+	
+	async def trade_to_portfolio(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
+		assets = [asset for asset in target_portfolio]
+		prices = self.prices(assets, quote)
+		weighted_portfolio = {asset: value * prices[asset] for asset, value in target_portfolio.items()}
+		return await self.trade_to_portfolio_weighted_limit(target_portfolio, quote, initial_portfolio)
+
+	async def trade_to_portfolio_weighted_limit(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
+		assets, prices, portfolio, target_portfolio, current_weighted_portfolio = self.process_portfolios(target_portfolio, quote, initial_portfolio)
+		sell_orders = self.calculate_sell_orders(assets, quote, target_portfolio, current_weighted_portfolio, portfolio)
+		fill_queue = asyncio.Queue()
+		complete = asyncio.Event()
+		placed_sell_orders = []
+		print('creating sell tasks...')
+		sell_task = asyncio.create_task(self.create_sell_order_tasks(sell_orders, quote, complete, fill_queue))	
 		
+		quote_values = self.portfolio_values(portfolio, quote)
+		total_value = sum(quote_values.values())
+		buy_orders, min_orders = self.calculate_buy_orders(assets, quote, target_portfolio, current_weighted_portfolio, total_value)
+		
+		total_volume = sum(volume for asset, volume in buy_orders)
+		volume_weights = [volume / total_volume for asset, volume in buy_orders]
+		print(volume_weights)
+			
+		tasks = []
+		print(portfolio[quote], current_weighted_portfolio[assets.index(quote)])
+		left_over_volume = portfolio[quote] * (current_weighted_portfolio[assets.index(quote)] - target_portfolio[assets.index(quote)])
+		while not complete.is_set():
+			try:
+				fill_event = await asyncio.wait_for(fill_queue.get(), 0.1)	
+				print('fill event!')
+				left_over_volume += fill_event['volume'] * fill_event['price']		
+				left_over_volume -= fill_event['fees'][quote] if quote in fill_event['fees'] else 0.0
+				fill_queue.task_done()
+			except asyncio.TimeoutError:
+				pass
+				
+			orders = [[asset, volume_weights[i] * left_over_volume] for i, (asset, volume) in enumerate(buy_orders)]
+			print(orders)
+			to_delete = []
+			for i, order in enumerate(orders):
+				if order[1] < min_orders[i][1]:
+					to_delete.append(i)
+					left_over_volume += order[1]
+
+			for i in reversed(to_delete):
+				del orders[i]
+
+			mid_prices = self.prices([asset for asset, volume in buy_orders], quote)
+			for base, quote_volume in orders:
+				print(base, quote_volume / mid_prices[base])
+				tasks.append(asyncio.create_task(self.limit_trade(base, quote, 'BUY', quote_volume / mid_prices[base])))
+			
+		
+		await asyncio.gather(*tasks, sell_task)
 
 class SpotTrader(Trader):
 	pass

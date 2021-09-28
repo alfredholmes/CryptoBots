@@ -101,4 +101,13 @@ class ConnectionManager:
 		return json.loads(response.text)
 
 
-	
+	async def rest_delete(self, endpoint: str, **kwargs):
+		headers = kwargs['headers'] if 'headers' in kwargs else {}
+		response = await self.httpx_client.delete(self.base_endpoint + endpoint, headers=headers)
+		try:
+			response.raise_for_status()
+		except Exception as e:
+			print(e, response.text)
+			raise e
+
+		return json.loads(response.text)

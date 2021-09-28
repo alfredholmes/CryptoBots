@@ -11,14 +11,14 @@ class Order:
 		self.side = side.upper()
 		self.volume = volume
 		self.remaining_volume = volume
-		self.open = False
+		self.open = True
 		self.completed = False	
 		self.filled_volume = 0 #Total order volume (including fees)
 		self.total_fees = {} #Fees paid, format {currency: fee}
 		self.fills = {}
 		self.fill_event = asyncio.Event()
 		self.close_event = asyncio.Event()
-		
+		self.price = None	
 		self.reported_fill = None
 	
 	def update(self, update_type, data):	
@@ -47,7 +47,7 @@ class Order:
 			
 		
 		if update_type == 'UPDATE':
-			if data['status'] == 'CLOSED':
+			if data['status'] == 'CLOSED' and data['id'] == self.id:
 				self.open = False
 				self.close_event.set()
 				self.reported_fill = data['filled_size']
@@ -80,6 +80,7 @@ class Account:
 		self.parse_order_update_task = asyncio.create_task(self.parse_order_updates())	
 		self.orders = {}
 		self.unhandled_order_updates = {}
+		self.fill_queues = {}
 	async def get_balance(self):
 		self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key) 
 	
@@ -123,12 +124,16 @@ class Account:
 						if fee_currency not in self.balance:
 							self.balance[fee_currency] = 0.0
 						self.balance[fee_currency] -= fee
+					print(order_update['id'], self.fill_queues)
+					if order_update['id'] in self.fill_queues:
+						await self.fill_queues[order_update['id']].put(order_update)
 				if order_update['id'] not in self.orders:
 					if order_update['id'] not in self.unhandled_order_updates:
 						self.unhandled_order_updates[order_update['id']] = []
 					self.unhandled_order_updates[order_update['id']].append(order_update)
 				else:
 					self.orders[order_update['id']].update(order_update['type'], order_update)
+
 				self.order_update_queue.task_done()
 		except Exception as e:
 			print('Error in Account.parse_order_updates():', e)
@@ -160,9 +165,33 @@ class Account:
 			response = await self.exchange.market_order(base, quote, side, kwargs['volume'], self.api_key, self.secret_key)
 		else:
 			response =  await self.exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key)
-	async def limit_order(self, base, quote, side, volume):
-		response = await self.exchange.limit_order(base, quote, 'SELL', volume, self.api_key, self.secret_key)
-	
+	async def limit_order(self, base, quote, side, price, volume, fill_queue = None):
+		order = await self.exchange.limit_order(base, quote, side, price, volume, self.api_key, self.secret_key)	
+		self.fill_queues[order.id] = fill_queue	
+		return order
+
+	async def change_order(self, order, **kwargs):	
+		print(kwargs)
+		if 'exchange' in kwargs:
+			exchange = kwargs['exchange']
+		if 'price' in kwargs and float(self.exchange.price_renderers[(order.base, order.quote)].render(kwargs['price'])) == order.price:
+			del kwargs['price']	
+		if 'price' in kwargs and 'size' in kwargs:	
+			new_order_id, new_price, new_remaining = await self.exchange.change_order(order.id, order.base, order.quote, self.api_key, self.secret_key, self.subaccount, price=kwargs['price'], size=kwargs['size'])
+		elif 'price' in kwargs:
+			new_order_id, new_price, new_remaining = await self.exchange.change_order(order.id, order.base, order.quote, self.api_key, self.secret_key, self.subaccount, price=kwargs['price'])
+		elif 'size' in kwargs:
+			new_order_id, new_price, new_remaining = await self.exchange.change_order(order.id, order.base, order.quote, self.api_key, self.secret_key, self.subaccount, size=kwargs['size'])
+		else:
+			print('no change to order')
+			return 
+		order.price = new_price	
+		if order.id in self.fill_queues:
+			self.fill_queues[new_order_id] = self.fill_queues[order.id]
+		order.id = new_order_id
+		self.orders[new_order_id] = order
+		
+		
 class BinanceAccount(Account):
 	async def get_dividend_record(self, limit = 20):
 		return await self.exchange.get_asset_dividend(limit, self.api_key, self.secret_key)
@@ -204,13 +233,21 @@ class FTXAccount(Account):
 			exchange = kwargs['exchange']
 		else:
 			exchange = self.exchange
-		response = await exchange.limit_order(base, quote, 'SELL', price, volume, self.api_key, self.secret_key, self.subaccount)
+		response = await exchange.limit_order(base, quote, side, price, volume, self.api_key, self.secret_key, self.subaccount)
 		self.add_order(response)
+		if 'fill_queue' in kwargs:
+			self.fill_queues[response.id] = kwargs['fill_queue'] 
+		else:
+			print(kwargs)
 		return response
-	
+
+	async def cancel_order(self, order_id, **kwargs):
+		response = await self.exchange.cancel_order(order_id, self.api_key, self.secret_key, self.subaccount)
+			
+
+
 	async def get_balance(self):
-		if self.balance is None:
-			self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key, self.subaccount)
+		self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key, self.subaccount)
 		
 
 	async def subscribe_to_user_data(self):

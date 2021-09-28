@@ -505,6 +505,16 @@ class FTXSpot(Exchange):
 			none_keys = []
 		return await self.submit_request(self.connection_manager.rest_post(endpoint, params=params, headers=headers), {'REQUEST': 1})
 
+	async def signed_delete(self, endpoint: str, api_key: str, secret_key: str, **kwargs):
+		headers = {}
+		params = None
+		if 'subaccount' not in kwargs:
+			FTXSpot.sign_headers(headers, api_key, secret_key, 'GET', endpoint, params)	
+		else:
+			FTXSpot.sign_headers(headers, api_key, secret_key, 'GET', endpoint, params, kwargs['subaccount'])	
+		
+		return await self.submit_request(self.connection_manager.rest_delete(endpoint, params=params, headers=headers), {'REQUEST': 1})
+
 	async def get_exchange_info(self, cache: bool = True):
 
 		self.limits.append(('REQUEST', 0.2, 3)) 
@@ -679,7 +689,7 @@ class FTXSpot(Exchange):
 			await self.subscribe_to_order_books((base, quote))
 		for volume_filter in self.volume_filters[(base, quote)].values():
 			base_volume = volume_filter.filter(base_volume, self.order_books[(base, quote)].market_buy_price(base_volume))
-		price = float(self.price_renderers[(base, quote)].render(price))
+		price = self.price_renderers[(base, quote)].render(price)
 		
 		base_volume = self.volume_renderers[(base, quote)].render(base_volume)
 
@@ -688,14 +698,38 @@ class FTXSpot(Exchange):
 			'side': side.lower(),
 			'price': price,
 			'type': 'limit',
-			'size': float(base_volume)
+			'size': base_volume
 		}
+		print(request)
 		response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
 		if 'success' not in response or not response['success']:
 			raise Execption('Order placement failed' + str(response))
 		else:
 			order_info = response['result']
-			return Order(order_info['id'], *self.trading_symbols[order_info['market']], order_info['side'].upper(), order_info['size'])	
+			order = Order(order_info['id'], *self.trading_symbols[order_info['market']], order_info['side'].upper(), order_info['size'])	
+			order.price = price
+			return order
+	async def cancel_order(self, order_id, api_key, secret_key, subaccount=None):
+		return await self.signed_delete('/orders/' + str(order_id), api_key, secret_key, subaccount=subaccount)
+
+	async def change_order(self, order_id, base, quote, api_key, secret_key, subaccount = None, **kwargs):
+		request = {}
+		if 'price' in kwargs:
+			request['price'] =  self.price_renderers[(base, quote)].render(kwargs['price'])	
+		if 'volume' in kwargs:
+			base_volume = kwargs['volume']
+			for volume_filter in self.volume_filters[(base, quote)].values():
+				base_volume = volume_filter.filter(base_volume, self.order_books[(base, quote)].market_buy_price(base_volume))	
+			request['size'] = self.volume_renderers[(base, quote)].render(base_volume)
+		response = await self.signed_post('/api/orders/' + str(order_id) + '/modify', api_key, secret_key, params=request, subaccount=subaccount)
+		if 'success' not in response or not response['success']:
+			raise Exception('Order modification failed' + str(response))
+
+		new_id = response['result']['id']
+		new_price = response['result']['price']
+		new_remaining = response['result']['remainingSize']
+
+		return new_id, new_price, new_remaining
 
 	async def get_account_balance(self, api_key, secret_key, subaccount = None):
 		coins = (await self.signed_get('/api/wallet/balances', api_key, secret_key, subaccount=subaccount))['result']
