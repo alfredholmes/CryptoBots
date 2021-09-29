@@ -37,9 +37,9 @@ async def main():
 		assets = ['BTC', 'ETH', 'SOL', 'USD']
 		
 		trader = Trader(account, ftx, assets, ['USD'])
-		await trader.get_trading_markets()
-		target_portfolio = {'BTC': 0.3, 'ETH': 0.2, 'SOL': 0.5, 'USD': 0.0}
-		#target_portfolio = {'BTC': 1.0, 'ETH': 0.0, 'SOL': 0.0, 'USD': 0.0}
+		await trader.get_trading_markets(100000)
+		target_portfolio = {'BTC': 0.0, 'ETH': 0.2, 'SOL': 0.5, 'USD': 0.0}
+		#target_portfolio = {'MTL': 0.0, 'BTC': 1.0, 'ETH': 0.0, 'SOL': 0.0, 'USD': 0.0}
 
 
 

@@ -34,6 +34,7 @@ class Exchange(ABC):
 		self.request_wait_lock = asyncio.Lock()	
 		self.exchange_info_lock = asyncio.Lock()
 		self.subscribe_to_order_book_lock = asyncio.Lock()
+		self.daily_volumes = {}
 	def close(self):
 		'''Cancel the objects asyncio tasks'''
 		self.send_requests_task.cancel()
@@ -254,6 +255,7 @@ class BinanceSpot(Exchange):
 		times = {'SECOND': 1, 'MINUTE': 60, 'DAY': 24 * 60 * 60}
 		for limit in self.exchange_info['rateLimits']:
 				self.limits.append((limit['rateLimitType'], times[limit['interval']] * limit['intervalNum'], limit['limit'])) 
+				
 		
 		for symbol in self.exchange_info['symbols']:
 			if (symbol['baseAsset'], symbol['quoteAsset']) in self.trading_markets:
@@ -509,9 +511,9 @@ class FTXSpot(Exchange):
 		headers = {}
 		params = None
 		if 'subaccount' not in kwargs:
-			FTXSpot.sign_headers(headers, api_key, secret_key, 'GET', endpoint, params)	
+			FTXSpot.sign_headers(headers, api_key, secret_key, 'DELETE', endpoint, params)	
 		else:
-			FTXSpot.sign_headers(headers, api_key, secret_key, 'GET', endpoint, params, kwargs['subaccount'])	
+			FTXSpot.sign_headers(headers, api_key, secret_key, 'DELETE', endpoint, params, kwargs['subaccount'])	
 		
 		return await self.submit_request(self.connection_manager.rest_delete(endpoint, params=params, headers=headers), {'REQUEST': 1})
 
@@ -532,6 +534,7 @@ class FTXSpot(Exchange):
 			base = market['baseCurrency']
 			quote = market['quoteCurrency']
 			self.trading_markets.append((base, quote))
+			self.daily_volumes[(base, quote)] = market['volumeUsd24h']
 			self.trading_symbols[market['name']] = (base, quote)
 			min_order = market['minProvideSize'] 
 			max_order = np.inf
@@ -700,7 +703,6 @@ class FTXSpot(Exchange):
 			'type': 'limit',
 			'size': base_volume
 		}
-		print(request)
 		response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
 		if 'success' not in response or not response['success']:
 			raise Execption('Order placement failed' + str(response))
@@ -710,12 +712,14 @@ class FTXSpot(Exchange):
 			order.price = price
 			return order
 	async def cancel_order(self, order_id, api_key, secret_key, subaccount=None):
-		return await self.signed_delete('/orders/' + str(order_id), api_key, secret_key, subaccount=subaccount)
+		return await self.signed_delete('/api/orders/' + str(order_id), api_key, secret_key, subaccount=subaccount)
+	async def cancel_all_orders(self, api_key, secret_key, subaccount=None):
+		return await self.signed_delete('/api/orders', api_key, secret_key, subaccount=subaccount)
 
 	async def change_order(self, order_id, base, quote, api_key, secret_key, subaccount = None, **kwargs):
 		request = {}
 		if 'price' in kwargs:
-			request['price'] =  self.price_renderers[(base, quote)].render(kwargs['price'])	
+			request['price'] = self.price_renderers[(base, quote)].render(kwargs['price'])	
 		if 'volume' in kwargs:
 			base_volume = kwargs['volume']
 			for volume_filter in self.volume_filters[(base, quote)].values():

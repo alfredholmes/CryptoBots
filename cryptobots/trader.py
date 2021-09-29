@@ -1,6 +1,8 @@
 import asyncio
 import time
 
+import httpx
+
 from .accounts import Account 
 from .exchanges import Exchange, BinanceSpot
 
@@ -47,7 +49,7 @@ class TradingSale:
 		
 
 class Trader:
-	def __init__(self, account: Account, exchange: Exchange, assets: list, quotes: list, trading_fee = 0):
+	def __init__(self, account: Account, exchange: Exchange, assets: list, quotes: list,trading_fee = 0):
 		'''Construct a Trader instance, assets are the assets that the trader can trade, while quotes are the quote markets to look at for each asset (if they exist)'''
 		self.account = account
 		self.exchange = exchange
@@ -57,12 +59,12 @@ class Trader:
 		self.sales = {}
 
 
-	async def get_trading_markets(self):
+	async def get_trading_markets(self, min_24h_volume = 0):
 		'''Gets a list of currently trading symbols'''
 		exchange_info = await self.exchange.get_exchange_info()
 		self.trading_markets = []
 		for base, quote in self.exchange.trading_markets:
-			if base in self.assets and quote in self.quotes:
+			if base in self.assets and quote in self.quotes and self.exchange.daily_volumes[(base, quote)] > min_24h_volume:
 				self.trading_markets.append((base, quote))
 		
 		await self.exchange.subscribe_to_order_books(*[m for m in self.trading_markets])
@@ -269,52 +271,72 @@ class Trader:
 
 		return {asset: round(new_balance, 8) for asset, new_balance in portfolio.items()}
 
-	async def limit_trade(self, base, quote, side, volume, fill_queue = None, timeout=10):
-		target_volume = volume
+	async def limit_trade(self, base, quote, side, fill_queue = None, timeout=10, max_slippage=0.01, **kwargs):
+		'''
+			Places a limit order for timout seconds and tries to keep the order in the middle of the order book
+		'''
 		mid_price = self.prices([base], quote)[base]
+		if 'volume' in kwargs:
+			volume = kwargs['volume']
+		elif 'quote_volume' in kwargs:
+			volume = kwargs['quote_volume'] / mid_price
+		target_volume = volume
+		start_price = mid_price
+		
+		min_volume = self.exchange.volume_filters[(base, quote)]['LOT_SIZE'].parameters.min_volume
+
 		if side == 'BUY' and target_volume * mid_price > self.account.balance[quote]:
 			volume = self.account.balance[quote] / mid_price
 		elif side == 'SELL' and target_volume > self.account.balance[base]:
 			volume = self.account.balance[base]
-		if fill_queue is not None:
-			print('posting limit order')
-			order = await self.account.limit_order(base, quote, side, mid_price, volume, fill_queue=fill_queue, exchange=self.exchange)
-		else:
-			order = await self.account.limit_order(base, quote, side, mid_price, volume, exchange=self.exchange)
-
+		try:
+			if fill_queue is not None:
+				print('Placing limit order', base, quote, side, mid_price, volume)
+				order = await self.account.limit_order(base, quote, side, mid_price, volume, fill_queue=fill_queue, exchange=self.exchange)
+			else:
+				order = await self.account.limit_order(base, quote, side, mid_price, volume, exchange=self.exchange)
+		except httpx.HTTPStatusError:
+			print('Error placing order')
+			return
+		
 		start_time = time.time()
+		await asyncio.sleep(1)
+		#wait to see if the order fills, if not
 		while order.open:
-			print('Order is open', order.id)
 			if time.time() - start_time > timeout:
 				break
-			await asyncio.sleep(1) 
 			mid_price = self.prices([base], quote)[base]
-			target_volume = order.remaining_volume
-			if side == 'BUY' and target_volume * mid_price > self.account.balance[quote]:
-				volume = self.account.balance[quote] / mid_price
-			elif side == 'SELL' and target_volume > self.account.balance[base]:
-				volume = self.account.balance[base]
-			await self.account.change_order(order, price=mid_price)
+			if side == 'SELL' and mid_price < start_price * (1 - max_slippage):
+				mid_price = mid_price * (1 - max_slippage)
+			if side == 'BUY' and mid_price > start_price / (1 - max_slippage):
+				mid_price = start_price / (1 - max_slippage)
+		
+			try:
+				if order.remaining_volume > min_volume:
+					await self.account.change_order(order, price=mid_price)
+			except httpx.HTTPStatusError:
+				print('Error trying to update order')
+				break
+			await asyncio.sleep(1)
 	
 		if order.open:
-			await self.account.cancel_order(order)
 			try:
+				await self.account.cancel_order(order)
 				await asyncio.wait_for(order.close_event.wait(), timeout)
 			except asyncio.TimeoutError:
 				print('Order cencellation timeout error', order.id, order.base, order.quote, order.price)
+			except httpx.HTTPStatusError:
+				print('Order cancellation status error')
 
 
 	async def create_sell_order_tasks(self, orders, quote, complete_event, fill_queue):
-		print('Here!', orders)	
 		tasks = []
 		for base, volume in orders:
-			print('requesting limit orders...')
-			tasks.append(asyncio.create_task(self.limit_trade(base, quote, 'SELL', volume, fill_queue)))
+			tasks.append(asyncio.create_task(self.limit_trade(base, quote, 'SELL', fill_queue, volume=volume)))
 		try:	
 			await asyncio.wait_for(asyncio.gather(*tasks), 15)
 		except asyncio.TimeoutError:
 			print('Timeout Error in sell order tasks')
-		print('setting complete event!')
 		complete_event.set()
 	
 	async def trade_to_portfolio(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
@@ -324,12 +346,12 @@ class Trader:
 		return await self.trade_to_portfolio_weighted_limit(target_portfolio, quote, initial_portfolio)
 
 	async def trade_to_portfolio_weighted_limit(self, target_portfolio: dict, quote='BTC', initial_portfolio: dict = None):
+		await self.account.cancel_all_orders()
 		assets, prices, portfolio, target_portfolio, current_weighted_portfolio = self.process_portfolios(target_portfolio, quote, initial_portfolio)
 		sell_orders = self.calculate_sell_orders(assets, quote, target_portfolio, current_weighted_portfolio, portfolio)
 		fill_queue = asyncio.Queue()
 		complete = asyncio.Event()
 		placed_sell_orders = []
-		print('creating sell tasks...')
 		sell_task = asyncio.create_task(self.create_sell_order_tasks(sell_orders, quote, complete, fill_queue))	
 		
 		quote_values = self.portfolio_values(portfolio, quote)
@@ -342,32 +364,30 @@ class Trader:
 			
 		tasks = []
 		print(portfolio[quote], current_weighted_portfolio[assets.index(quote)])
-		left_over_volume = portfolio[quote] * (current_weighted_portfolio[assets.index(quote)] - target_portfolio[assets.index(quote)])
+		quote_index = assets.index(quote)
+		to_buy = portfolio[quote] * (current_weighted_portfolio[quote_index] - target_portfolio[quote_index]) / current_weighted_portfolio[quote_index] if portfolio[quote] > 0 else 0.0
+		
+		orders = [[asset, volume_weights[i] * to_buy] for i, (asset, volume) in enumerate(buy_orders) if volume_weights[i] * to_buy  > min_orders[i][1]]
+		for base, quote_volume in orders:
+			tasks.append(asyncio.create_task(self.limit_trade(base, quote, 'BUY', quote_volume=quote_volume)))
+		to_buy -= sum(volume for asset, volume in orders)
 		while not complete.is_set():
 			try:
 				fill_event = await asyncio.wait_for(fill_queue.get(), 0.1)	
-				print('fill event!')
-				left_over_volume += fill_event['volume'] * fill_event['price']		
-				left_over_volume -= fill_event['fees'][quote] if quote in fill_event['fees'] else 0.0
+				to_buy += fill_event['volume'] * fill_event['price']		
+				to_buy -= fill_event['fees'][quote] if quote in fill_event['fees'] else 0.0
 				fill_queue.task_done()
 			except asyncio.TimeoutError:
 				pass
 				
-			orders = [[asset, volume_weights[i] * left_over_volume] for i, (asset, volume) in enumerate(buy_orders)]
-			print(orders)
-			to_delete = []
-			for i, order in enumerate(orders):
-				if order[1] < min_orders[i][1]:
-					to_delete.append(i)
-					left_over_volume += order[1]
-
-			for i in reversed(to_delete):
-				del orders[i]
+			orders = [[asset, volume_weights[i] * to_buy] for i, (asset, volume) in enumerate(buy_orders) if volume_weights[i] * to_buy > min_orders[i][1] ]
+			to_buy -= sum(quote_volume for asset, quote_volume in orders)
 
 			mid_prices = self.prices([asset for asset, volume in buy_orders], quote)
 			for base, quote_volume in orders:
 				print(base, quote_volume / mid_prices[base])
-				tasks.append(asyncio.create_task(self.limit_trade(base, quote, 'BUY', quote_volume / mid_prices[base])))
+				tasks.append(asyncio.create_task(self.limit_trade(base, quote, 'BUY', quote_volume=quote_volume)))
+
 			
 		
 		await asyncio.gather(*tasks, sell_task)

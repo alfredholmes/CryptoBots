@@ -20,6 +20,7 @@ class Order:
 		self.close_event = asyncio.Event()
 		self.price = None	
 		self.reported_fill = None
+		self.modifyed = False
 	
 	def update(self, update_type, data):	
 		balance_changes = {self.quote: 0, self.base: 0}
@@ -47,13 +48,13 @@ class Order:
 			
 		
 		if update_type == 'UPDATE':
-			if data['status'] == 'CLOSED' and data['id'] == self.id:
+			if data['status'] == 'CLOSED' and data['id'] == self.id and not self.modifyed:
 				self.open = False
 				self.close_event.set()
 				self.reported_fill = data['filled_size']
 				if self.reported_fill - 10**-5 <= self.volume - self.remaining_volume:
 					self.fill_event.set()
-				if self.reported_fill == 0.0:
+				if self.reported_fill == 0.0 and self.price is None:
 					print('Order canceled by exchange, no reason given')
 		return balance_changes
 
@@ -172,6 +173,9 @@ class Account:
 
 	async def change_order(self, order, **kwargs):	
 		print(kwargs)
+		order.modifyed = True
+		if order.remaining_volume < 10**-6:
+			return
 		if 'exchange' in kwargs:
 			exchange = kwargs['exchange']
 		if 'price' in kwargs and float(self.exchange.price_renderers[(order.base, order.quote)].render(kwargs['price'])) == order.price:
@@ -184,11 +188,13 @@ class Account:
 			new_order_id, new_price, new_remaining = await self.exchange.change_order(order.id, order.base, order.quote, self.api_key, self.secret_key, self.subaccount, size=kwargs['size'])
 		else:
 			print('no change to order')
+			order.modifyed = False
 			return 
 		order.price = new_price	
 		if order.id in self.fill_queues:
 			self.fill_queues[new_order_id] = self.fill_queues[order.id]
 		order.id = new_order_id
+		order.modifyed = False
 		self.orders[new_order_id] = order
 		
 		
@@ -242,7 +248,7 @@ class FTXAccount(Account):
 		return response
 
 	async def cancel_order(self, order_id, **kwargs):
-		response = await self.exchange.cancel_order(order_id, self.api_key, self.secret_key, self.subaccount)
+		response = await self.exchange.cancel_order(order_id.id, self.api_key, self.secret_key, self.subaccount)
 			
 
 
@@ -253,3 +259,5 @@ class FTXAccount(Account):
 	async def subscribe_to_user_data(self):
 		await self.get_balance()
 		await self.exchange.subscribe_to_user_data(self.api_key, self.secret_key, self.subaccount)	
+	async def cancel_all_orders(self):
+		await self.exchange.cancel_all_orders(self.api_key, self.secret_key, self.subaccount)
