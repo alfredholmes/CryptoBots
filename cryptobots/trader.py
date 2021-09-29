@@ -289,11 +289,15 @@ class Trader:
 			volume = self.account.balance[quote] / mid_price
 		elif side == 'SELL' and target_volume > self.account.balance[base]:
 			volume = self.account.balance[base]
+		if volume < min_volume:
+			return
+
 		try:
 			if fill_queue is not None:
 				print('Placing limit order', base, quote, side, mid_price, volume)
 				order = await self.account.limit_order(base, quote, side, mid_price, volume, fill_queue=fill_queue, exchange=self.exchange)
 			else:
+				print('Placing limit order', base, quote, side, mid_price, volume)
 				order = await self.account.limit_order(base, quote, side, mid_price, volume, exchange=self.exchange)
 		except httpx.HTTPStatusError:
 			print('Error placing order')

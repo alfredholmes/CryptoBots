@@ -208,7 +208,7 @@ class FloatRenderer:
 
 	def render(self, value: float):
 		if self.return_float:
-			return int(value / self.tick_size) * self.tick_size
+			return round(int(value / self.tick_size) * self.tick_size, self.precision)
 		if self.tick_size is None:
 			return ('{0:.' + str(self.precision) + 'f}').format(value)
 		n_ticks = int(value / self.tick_size)
@@ -703,6 +703,8 @@ class FTXSpot(Exchange):
 			'type': 'limit',
 			'size': base_volume
 		}
+		print(price * base_volume, price, base_volume)
+		print(request)
 		response = await self.signed_post('/api/orders', api_key, secret_key, params=request, subaccount=subaccount)
 		if 'success' not in response or not response['success']:
 			raise Execption('Order placement failed' + str(response))

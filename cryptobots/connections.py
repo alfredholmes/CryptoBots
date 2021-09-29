@@ -94,7 +94,8 @@ class ConnectionManager:
 		try:
 			response.raise_for_status()
 		except Exception as e:
-			print(e, response.text)
+			print(e, response.text, response.request.body)
+
 			raise e
 
 
