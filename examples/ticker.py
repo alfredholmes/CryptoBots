@@ -3,7 +3,7 @@
 Script to demonstate websocket order book updates 
 
 Author: 
-	Alfred Holmes
+    Alfred Holmes
 
 '''
 
@@ -14,30 +14,23 @@ import sys
 sys.path.append("./")
 
 
-from cryptobots.connections import ConnectionManager
-from cryptobots.exchanges import FTXSpot
-from cryptobots.accounts import FTXAccount 
-import keys_ftx as keys
-
+from cryptobots import FTX
+from cryptobots import Binance
 
 
 
 async def main(args):
 
-	#connect to FTX spot
-	async with ConnectionManager('https://ftx.com', 'wss://ftx.com/ws') as connection_manager:
-		ftx = FTXSpot(connection_manager)	
-		await ftx.get_exchange_info()
-		
-		pairs = [tuple(pair.split('-')) for pair in args]
-		await ftx.subscribe_to_order_books(*pairs)
-		
-		while True:
-			for pair in pairs:
-				print(pair[0] + '-' + pair[1] + ' mid price: ',ftx.order_books[pair].mid_price())	
-			print()
-			await asyncio.sleep(0.5)
+    #connect to FTX spot
+    print('connecting...')
+    async with FTX() as ftx, Binance() as binance:
+        print('subscribing to order books')
+        await ftx.subscribe_to_order_books(('BTC', 'USD'))
+        await binance.subscribe_to_order_books(('BTC', 'USDT'))
 
+        for i in range(10):
+            print(ftx.order_books[('BTC', 'USD')].mid_price(), binance.order_books[('BTC', 'USDT')].mid_price())
+            await asyncio.sleep(1)
 
 if __name__=='__main__':
-	asyncio.run(main(sys.argv[1:]))
+    asyncio.run(main(sys.argv[1:]))

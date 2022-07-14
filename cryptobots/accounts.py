@@ -1,263 +1,389 @@
-#from .exchanges import Exchange, FTXSpot
-import asyncio
+import asyncio, math
+from contextlib import suppress
+from abc import ABC, abstractmethod
+from httpx import HTTPStatusError
 
+from .exchanges import Position, OrderClosed
+from .exchanges import Order, Fill
 
-class Order:
-	def __init__(self, order_id: str,  base: str, quote: str, side: str, volume: float):
-		
-		self.id = order_id
-		self.base = base
-		self.quote = quote
-		self.side = side.upper()
-		self.volume = volume
-		self.remaining_volume = volume
-		self.open = True
-		self.completed = False	
-		self.filled_volume = 0 #Total order volume (including fees)
-		self.total_fees = {} #Fees paid, format {currency: fee}
-		self.fills = {}
-		self.fill_event = asyncio.Event()
-		self.close_event = asyncio.Event()
-		self.price = None	
-		self.reported_fill = None
-		self.modifyed = False
-	
-	def update(self, update_type, data):	
-		balance_changes = {self.quote: 0, self.base: 0}
-		if update_type == 'FILL':
-			if data['trade_id'] in self.fills:
-				return balance_changes
-			volume_modifyer = 1 if self.side == 'BUY' else -1
-			self.remaining_volume -= data['volume']
-			print('Order', self.id, self.base, self.quote, ' fill, remaining volume: ', self.remaining_volume) 
-			balance_changes[self.base] += volume_modifyer * data['volume']
-			balance_changes[self.quote] -= volume_modifyer * data['volume'] * data['price']	
-			for currency, fee in data['fees'].items():
-				if currency not in self.total_fees:
-					self.total_fees[currency] = 0
-				if currency not in balance_changes:
-					balance_changes[currency] = 0
-				self.total_fees[currency] += fee
-				balance_changes[currency] -= fee
-				self.fills[data['trade_id']] = dict(balance_changes)	
+import logging
+from logging.handlers import TimedRotatingFileHandler
 
-			if self.remaining_volume < 10**-5 or (self.reported_fill is not None and self.reported_fill - 10**-5 <= self.volume - self.remaining_volume):
-				self.open = False
-				self.completed = True
-				self.fill_event.set()
-			
-		
-		if update_type == 'UPDATE':
-			if data['status'] == 'CLOSED' and data['id'] == self.id and not self.modifyed:
-				self.open = False
-				self.close_event.set()
-				self.reported_fill = data['filled_size']
-				if self.reported_fill - 10**-5 <= self.volume - self.remaining_volume:
-					self.fill_event.set()
-				if self.reported_fill == 0.0 and self.price is None:
-					print('Order canceled by exchange, no reason given')
-		return balance_changes
+class RequestError(Exception):
+    """
+        Exception raised when account request fails
+    """
 
 
 
-class LimitOrder(Order):
-	pass
-
-class MarketOrder(Order):
-	pass
-	
-		
-		
-		
-
-class Account:
-	'''Account class to manage orders and store basic data'''
-	def __init__(self, api, secret, exchange):
-		self.api_key = api
-		self.secret_key = secret
-		self.exchange = exchange
-		self.balance = None
-		self.order_update_queue = exchange.user_update_queue
-		self.parse_order_update_task = asyncio.create_task(self.parse_order_updates())	
-		self.orders = {}
-		self.unhandled_order_updates = {}
-		self.fill_queues = {}
-	async def get_balance(self):
-		self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key) 
-	
-	def __str__(self):
-		r = ''	
-		for coin, balance in self.balance.items():
-			if balance > 0:
-				r += coin + '\t| ' + '{0:.4f}'.format(balance)
-				r += '\n'
-
-		return r 	
-	
-	def remove_closed_orders(self):
-		to_delete = []
-		for order_id, order in self.orders.items():
-			if not order.open:
-				to_delete.append(order_id)
-		for order_id in to_delete:
-			del self.orders[order_id]
-	async def get_open_orders(self):
-		pass	
-		
-	
-	async def parse_order_updates(self):
-		try:
-			while True and self.exchange.connection_manager.open:
-				if self.balance is None:
-					await self.get_balance()
-
-				order_update = await self.order_update_queue.get()
-				if order_update['type'] == 'FILL':
-					volume_modifyer = 1 if order_update['side'] == 'BUY' else -1
-					base, quote = order_update['market'] 	
-					if base not in self.balance:
-						self.balance[base] = 0.0
-					if quote not in self.balance:
-						self.balance[quote] = 0.0
-					self.balance[base] += volume_modifyer * order_update['volume']
-					self.balance[quote] -= volume_modifyer * order_update['volume'] * order_update['price']
-					for fee_currency, fee in order_update['fees'].items():
-						if fee_currency not in self.balance:
-							self.balance[fee_currency] = 0.0
-						self.balance[fee_currency] -= fee
-					print(order_update['id'], self.fill_queues)
-					if order_update['id'] in self.fill_queues:
-						await self.fill_queues[order_update['id']].put(order_update)
-				if order_update['id'] not in self.orders:
-					if order_update['id'] not in self.unhandled_order_updates:
-						self.unhandled_order_updates[order_update['id']] = []
-					self.unhandled_order_updates[order_update['id']].append(order_update)
-				else:
-					self.orders[order_update['id']].update(order_update['type'], order_update)
-
-				self.order_update_queue.task_done()
-		except Exception as e:
-			print('Error in Account.parse_order_updates():', e)
-	
-	def add_order(self, order):
-		if order.id in self.unhandled_order_updates:
-			for update in self.unhandled_order_updates[order.id]:
-				order.update(update['type'], update)
-		self.orders[order.id] = order
-	
-	async def refresh_fills(self, start_time):
-		fills =  await self.exchange.get_order_fills(start_time, self.api_key, self.secret_key)
-		for fill in fills:
-			if fill['id'] not in self.orders:
-				print('Error in account class, orders out of sync!')
-				#need to update orders
-			elif fill['trade_id'] not in self.orders[fill['id']]:
-				self.orders[fill['id']].update('FILL', fill)
-			
-
-					
-	
-	async def market_order(self, base, quote, side, **kwargs):
-		if 'quote_volume' not in kwargs and 'volume' not in kwargs:
-			print('ERROR: missing required argument')
-			#TODO: proper exception
-			return
-		if 'volume' in kwargs:
-			response = await self.exchange.market_order(base, quote, side, kwargs['volume'], self.api_key, self.secret_key)
-		else:
-			response =  await self.exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key)
-	async def limit_order(self, base, quote, side, price, volume, fill_queue = None):
-		order = await self.exchange.limit_order(base, quote, side, price, volume, self.api_key, self.secret_key)	
-		self.fill_queues[order.id] = fill_queue	
-		return order
-
-	async def change_order(self, order, **kwargs):	
-		print(kwargs)
-		order.modifyed = True
-		if order.remaining_volume < 10**-6:
-			return
-		if 'exchange' in kwargs:
-			exchange = kwargs['exchange']
-		if 'price' in kwargs and float(self.exchange.price_renderers[(order.base, order.quote)].render(kwargs['price'])) == order.price:
-			del kwargs['price']	
-		if 'price' in kwargs and 'size' in kwargs:	
-			new_order_id, new_price, new_remaining = await self.exchange.change_order(order.id, order.base, order.quote, self.api_key, self.secret_key, self.subaccount, price=kwargs['price'], size=kwargs['size'])
-		elif 'price' in kwargs:
-			new_order_id, new_price, new_remaining = await self.exchange.change_order(order.id, order.base, order.quote, self.api_key, self.secret_key, self.subaccount, price=kwargs['price'])
-		elif 'size' in kwargs:
-			new_order_id, new_price, new_remaining = await self.exchange.change_order(order.id, order.base, order.quote, self.api_key, self.secret_key, self.subaccount, size=kwargs['size'])
-		else:
-			print('no change to order')
-			order.modifyed = False
-			return 
-		order.price = new_price	
-		if order.id in self.fill_queues:
-			self.fill_queues[new_order_id] = self.fill_queues[order.id]
-		order.id = new_order_id
-		order.modifyed = False
-		self.orders[new_order_id] = order
-		
-		
-class BinanceAccount(Account):
-	async def get_dividend_record(self, limit = 20):
-		return await self.exchange.get_asset_dividend(limit, self.api_key, self.secret_key)
-
-	async def get_account_websocket_key(self):
-		response = await self.exchange.connection_manager.signed_get()
-	
-class FuturesAccount(Account):
-	pass
-
-class FTXAccount(Account):
-	def __init__(self, api, secret, exchange, subaccount = None, connection_manager = None):
-		self.subaccount = subaccount
-		super().__init__(api, secret, exchange)
-		if connection_manager is not None:
-			self.connection_manager = connection_manager
-		
-	async def market_order(self, base, quote, side, **kwargs):
-		if 'exchange' in kwargs:
-			exchange = kwargs['exchange']
-		else:
-			exchange = self.exchange 
-		if 'quote_volume' not in kwargs and 'volume' not in kwargs:
-			print('ERROR: missing required argument')
-			#TODO: proper exception
-			return
-		if 'volume' in kwargs:
-			order = await exchange.market_order(base, quote, side, kwargs['volume'], self.api_key, self.secret_key, self.subaccount)
-		else:
-			order =  await exchange.market_order_quote_volume(base, quote, side, kwargs['quote_volume'], self.api_key, self.secret_key, self.subaccount)
-		if order is None:
-			#failed to place order...
-			return
-		self.add_order(order)
-		return order
-			
-	async def limit_order(self, base, quote, side, price, volume, **kwargs):
-		if 'exchange' in kwargs: 
-			exchange = kwargs['exchange']
-		else:
-			exchange = self.exchange
-		response = await exchange.limit_order(base, quote, side, price, volume, self.api_key, self.secret_key, self.subaccount)
-		self.add_order(response)
-		if 'fill_queue' in kwargs:
-			self.fill_queues[response.id] = kwargs['fill_queue'] 
-		else:
-			print(kwargs)
-		return response
-
-	async def cancel_order(self, order_id, **kwargs):
-		response = await self.exchange.cancel_order(order_id.id, self.api_key, self.secret_key, self.subaccount)
-			
 
 
-	async def get_balance(self):
-		self.balance = await self.exchange.get_account_balance(self.api_key, self.secret_key, self.subaccount)
-		
+class SpotAccount:
+    order_limit = 6
+    def __init__(self, keys, exchange, collateral_asset, name=None, timeout=10):
+        self.exchange = exchange
+        self.keys = keys
+        self.orders = {}
+        self.positions = {}
+        self.open_orders = {}
+        self.unhandled_fills = {}
+        self.name = name
+        self.collateral_asset = collateral_asset
+            
+        self.update_task = asyncio.create_task(self.parse_updates())
+        self.fill_event = asyncio.Event()
+        self.logger = logging.getLogger(f"{__name__}.{name}")
+        self.logger.setLevel(logging.DEBUG)
+        if name is None:
+            ch = logging.StreamHandler()
+        else:
+            ch = TimedRotatingFileHandler(f"logs/accounts.{name}.log", backupCount = 5)
+        ch.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        self.logger.addHandler(ch)
 
-	async def subscribe_to_user_data(self):
-		await self.get_balance()
-		await self.exchange.subscribe_to_user_data(self.api_key, self.secret_key, self.subaccount)	
-	async def cancel_all_orders(self):
-		await self.exchange.cancel_all_orders(self.api_key, self.secret_key, self.subaccount)
+        self.running = True
+
+
+
+
+    async def __aenter__(self):
+        await self.get_account_data()
+        return self 
+        
+
+    async def __aexit__(self, *details): 
+        self.update_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self.update_task 
+
+
+    async def parse_updates(self):
+        while self.running:
+            try:
+                update = await asyncio.wait_for(self.exchange.user_updates.get(), 5 * 60)
+            except asyncio.TimeoutError:
+                self.logger.debug('5 minutes since update, refreshing account')
+                try:
+                    await self.get_account_balance()
+                    await self.get_account_positions()
+                    await self.get_open_orders()
+                except Exception:
+                    pass
+                continue
+
+            self.logger.debug(f'number of open orders {len(self.open_orders)}')
+            try:
+                await self.parse_update(update)
+            except Exception:
+                self.logger.exception('Failed to update')
+                self.logger.debug('Refreshing orders')
+                await self.get_open_orders()
+               
+                for order_id in self.open_orders:
+                    await self.get_fills(order_id)
+
+    async def parse_update(self, update):
+        
+        if update['type'] == 'order_update':
+            order = update['order']
+            if order.id not in self.orders:
+                self.new_order(order)
+                self.orders[order.id] = order 
+                if order.status == 'new' or order.status == 'open':
+                    self.logger.debug('new order')
+                    self.open_orders[order.id] = order
+                    
+                if order.id in self.unhandled_fills:
+                    for unhandled in self.unhandled_fills[order.id]:
+                        if self.exchange[unhandled.market].type == 'spot':
+                            self.apply_spot_fill_update(unhandled)
+                        else:
+                            self.apply_future_fill_update(unhandled)
+                    del self.unhandled_fills[order.id]
+            else:
+                self.apply_order_update(update['order'])
+        elif update['type'] == 'fill_update':
+            self.fill_event.set()
+            self.fill_event.clear()
+            fill = update['fill']
+            if fill.order_id in self.orders and fill.id not in self.orders[fill.order_id].fills:
+                if fill.market.type == 'spot':
+                    self.apply_spot_fill_update(fill)
+                elif fill.market.type == 'future':
+                    self.apply_future_fill_update(fill)
+            else:
+                if fill.order_id not in self.unhandled_fills:
+                    self.unhandled_fills[fill.order_id] = []
+                self.unhandled_fills[fill.order_id].append(fill)
+    
+    async def dust(self, base_asset, prices):
+        assets = []
+        for asset, v in self.balance.items():
+            if v == 0 or (asset, base_asset) not in self.exchange.markets:
+                continue
+            if v < self.exchange.markets[(asset, base_asset)].min_provide_size:
+                assets.append(asset)
+            elif asset in prices and v * prices[asset] < self.exchange.markets[(asset, base_asset)].min_quote_volume:
+                assets.append(asset)
+        if len(assets) > 0:
+             self.logger.info(f'Dusting {assets}')
+             await self.exchange.dust(*self.keys, assets)
+
+    async def convert_small_balance_to_usd(self):
+        for asset, v in self.balance.items():
+            if asset == 'USD':
+                continue
+            if v > 0 and v < self.exchange.markets[(asset, 'USD')].min_provide_size:
+                try:
+                    await self.convert_to_usd(asset)
+                except Exception:
+                    self.logger.exception('Error converting to USD')
+                await asyncio.sleep(0.4)
+
+    async def convert_to_usd(self, asset):
+        quote, price, time = await self.exchange.get_convert_quote(*self.keys, asset, 'USD', self.balance[asset])
+        await self.exchange.accept_convert_quote(*self.keys, quote)
+
+    def apply_order_update(self, new_order):
+        current_order = self.orders[new_order.id] 
+        self.logger.debug(f"Order update, {new_order.id}")        
+        current_order.status = new_order.status
+        if new_order.status == 'closed':   
+            current_order.filled_volume = new_order.filled_volume
+            current_order.volume = new_order.filled_volume
+            if current_order.id in self.open_orders and current_order.recorded_fills == current_order.filled_volume:
+                del self.open_orders[current_order.id]
+            self.new_order(current_order)
+        elif new_order.status != 'requested_cancellation':
+            current_order.status = new_order.status
+            current_order.filled_volume = new_order.filled_volume 
+            self.new_order(current_order) 
+
+    
+
+    def apply_future_fill_update(self, fill):
+        for asset, fee in fill.fees.items():
+            self.balance[asset] -= fee
+        try:
+            self.free_collateral -= fill.fees[self.collateral_asset]
+        except KeyError:
+            pass
+        
+        if fill.market.pair not in self.positions:
+            side = -1 if fill.side == 'sell' else 1
+            self.positions[fill.market.pair] = Position(fill.market,  side,  fill.volume, fill.price, fill.price * fill.volume / self.leverage)
+            self.free_collateral -= self.positions[fill.market.pair].margin_requirement
+        else:
+            original_position = self.positions[fill.market.pair]
+            
+            signed_fill_volume = -fill.volume if fill.side == 'sell' else fill.volume
+            
+            new_volume = original_position.volume * original_position.side + signed_fill_volume 
+            
+            if original_position.side * signed_fill_volume < 0:
+                #reducing position
+                self.balance[self.collateral_asset] += original_position.side * (fill.price - original_position.entry_price) * fill.volume
+                if new_volume * original_position.side < 0:
+                    side = -original_position.side
+                    margin_requirement = fill.volume * fill.price / self.leverage
+                    entry_price = fill.price
+                else:
+                    side = original_position.side
+                    margin_requirement = original_position.margin_requirement * abs(new_volume) / original_position.volume 
+                    entry_price = original_position.entry_price
+            else:
+                #increasing position
+                new_volume = original_position.volume + fill.volume
+                side = original_position.side
+                margin_requirement = original_position.margin_requirement + fill.volume * fill.price / self.leverage
+                entry_price = fill.volume / abs(new_volume) * fill.price + (original_position.volume) / abs(new_volume) * original_position.entry_price  
+
+                
+            self.free_collateral -= original_position.margin_requirement - margin_requirement 
+            self.positions[fill.market.pair] = Position(fill.market, side, abs(new_volume), entry_price, margin_requirement) 
+
+            if new_volume == 0:
+                del self.positions[fill.market.pair]
+        
+        order = self.orders[fill.order_id]
+        order.fills[fill.id] = fill
+        order.recorded_fills += fill.volume
+        order.remaining_volume = order.volume - order.recorded_fills
+        if order.remaining_volume <= 0 and order.id in self.open_orders:
+            del self.open_orders[order.id]
+        self.new_order(self.orders[fill.order_id])
+
+             
+
+            
+           
+            
+
+
+    def apply_spot_fill_update(self, fill):
+        order = None
+        self.logger.debug(f"Fill update received {fill}")
+        if fill.order_id in self.orders:
+                order = self.orders[fill.order_id]
+                order.fills[fill.id] = fill
+                order.recorded_fills += fill.volume
+                order.remaining_volume = order.volume - order.recorded_fills
+                if fill.order_id in self.open_orders and order.remaining_volume == 0:
+                    self.logger.info(f"Order {fill.order_id} fully filled")
+                    del self.open_orders[fill.order_id]
+        else:
+                self.logger.warning(f"Fill recived for order {fill.order_id} not tracked")
+                
+        side = fill.side
+        market = fill.market.pair
+        changes = {}
+        volume_modifyer = -1 if side == 'sell' else 1
+
+        changes = {market[0]: volume_modifyer * fill.volume, market[1]: -volume_modifyer * fill.volume * fill.price} 
+        for currency, fee in fill.fees.items():
+            if currency not in changes:
+                changes[currency] = 0
+            changes[currency] -= fee
+        
+        for currency, change in changes.items():    
+            if currency not in self.balance:
+                self.balance[currency] = 0 
+            if currency not in self.available:
+                self.available[currency] = 0
+
+            self.available[currency] += change
+            self.balance[currency] += change
+
+            if order is not None and order.type == 'limit':
+                if change < 0:
+                    self.available[currency] -= change 
+        self.logger.debug(self.balance)
+
+    def new_order(self, order):
+        if order.type == 'limit':
+            if order.side == 'buy' and order.market.type == 'spot':
+                #quote asset no longer available
+                order.balance_mod[order.market.quote] = -(order.volume - order.recorded_fills) * order.price         
+            elif order.side == 'sell' and order.market.type == 'spot': 
+                #base asset no longer avail 
+                order.balance_mod[order.market.base] = -(order.volume - order.recorded_fills)
+
+            if order.market.type == 'future':
+                #if we already have a position in the future
+                if order.market in self.positions:
+                    position = self.positions[order.market.pair]
+                    #let position_volume be the signed volume of the position
+                    position_volume = position.side * position.volume
+                else:
+                    position_volume = 0
+
+            
+                side = -1 if order.side == 'sell' else 1
+                required_collateral = position_volume - (order.volume - order.remaining_volume) * side
+                if abs(required_collateral) > abs(position_volume):
+                    #increasing position
+                    self.free_collateral -= (order.volume - order.remaining_volume) * order.price / self.leverage
+                
+            
+    def available(self):
+        """
+            Return the available account balance
+        """
+        available = dict(self.balance)
+        for order in self.open_orders:
+            for asset, modification in order.balance_mod:
+               available[asset] += modification
+                
+
+
+    async def get_account_data(self):
+        await self.get_account_info()
+        await self.get_account_balance()
+        await self.get_account_positions()
+        
+        await self.exchange.subscribe_to_user_data(*self.keys)
+        await self.get_open_orders()
+
+
+    def add_positions(self, positions):
+        for position in positions:
+            if position.volume != 0:
+                self.positions[position.market.pair] = position
+
+    async def get_account_positions(self):
+        self.positions = {}
+        positions = await self.exchange.get_positions(*self.keys)
+        self.add_positions(positions)
+        pnl = 0 
+        for position in self.positions.values():
+            pnl += position.pnl
+
+        if self.collateral_asset in self.balance:
+            self.balance[self.collateral_asset] -= pnl
+        
+    
+
+    async def get_account_balance(self):
+        self.balance, self.available = await self.exchange.get_account_balances(*self.keys)
+        await self.get_account_positions()
+
+    async def get_account_info(self):
+        account_info = await self.exchange.get_account_info(*self.keys)
+        #self.add_positions(account_info['positions'])
+        self.leverage = account_info['leverage']
+        self.free_collateral = account_info['free_collateral']
+        #self.maker_fee = account_info['maker_fee']
+        #self.taker_fee = account_info['taker_fee']
+    
+    async def get_open_orders(self): 
+        self.orders = {}
+        self.open_orders = {}
+        await self.exchange.get_open_orders(*self.keys)
+        await self.get_account_balance()
+
+    async def get_fills(self, order_id = None):
+        if order_id is None:
+            market = None
+        else:
+            market = self.orders[order_id].market
+        await self.exchange.get_fills(*self.keys, order_id, market)
+          
+    async def cancel_order(self, order_id):
+        self.logger.debug(f"cancelling order {order_id} with status {self.orders[order_id].status}")
+        if self.orders[order_id].status != 'requested_cancellation' and self.orders[order_id].status != 'closed':
+            try:
+                await self.exchange.cancel_order(*self.keys, order_id, self.orders[order_id].market)
+            except OrderClosed:
+                if order_id in self.open_orders:
+                    del self.open_orders[order_id]
+            self.orders[order_id].status = 'requested_cancellation' 
+        elif self.orders[order_id].status == 'requested_cancellation':
+            await self.get_fills(order_id)
+           
+
+    async def cancel_all_orders(self):
+        await self.exchange.cancel_all_orders(*self.keys)
+
+
+    async def set_leverage(self, leverage: int):
+        await self.exchange.set_account_leverage(*self.keys, leverage)
+        self.leverage = leverage
+    
+
+    async def market_order(self, market, side, volume):
+        await self.exchange.market_order(*self.keys, market, side, volume)
+
+    async def limit_order(self, market, side, price, volume, **kwargs):
+
+        if side == 'buy': 
+            price = math.floor(price / self.exchange.markets[market].price_increment) * self.exchange.markets[market].price_increment + 10 ** -14
+            volume = math.floor(volume / self.exchange.markets[market].size_increment) * self.exchange.markets[market].size_increment
+        elif side == 'sell':
+            price = math.ceil(price / self.exchange.markets[market].price_increment) * self.exchange.markets[market].price_increment - 10 ** -14
+            volume = math.floor(volume / self.exchange.markets[market].size_increment) * self.exchange.markets[market].size_increment
+
+        
+        await self.exchange.limit_order(*self.keys, market, side, price, volume, **kwargs)
+
