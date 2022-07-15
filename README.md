@@ -1,4 +1,4 @@
-# Cryptocurrenty Trading Bot Framework
+# Cryptocurrency Trading Bot Framework
 Asynchronous Bot Framework for Binance and FTX Cryptocurrency Exchanges, potentially more will be added in the future. As the APIs are quite simple, the framework interfaces with these directly to remain lightweight and avoid security issues.
 
 
