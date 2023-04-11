@@ -14,14 +14,13 @@ import sys
 sys.path.append("./")
 
 
-from cryptobots import FTX
+
 from cryptobots import Binance
 
 
 
 async def main(args):
 
-    #connect to FTX spot
     print('connecting...')
     async with Binance() as binance:
         print('subscribing to order books')

@@ -326,8 +326,7 @@ class Binance(Exchange):
 
     
     async def dust(self, api_key, secret_key, assets):
-        assets = [a for a in assets if a != 'BNB']
-        assets = assets[:20]
+        assets = ','.join([a for a in assets if a != 'BNB'])
         if len(assets) == 0:
             return
         await self.signed_post('/sapi/v1/asset/dust', api_key, secret_key, params={'asset': assets})
