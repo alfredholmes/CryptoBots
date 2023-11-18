@@ -29,7 +29,7 @@ class SpotAccount:
         self.unhandled_fills = {}
         self.name = name
         self.collateral_asset = collateral_asset
-            
+
         self.update_task = asyncio.create_task(self.parse_updates())
         self.fill_event = asyncio.Event()
         self.logger = logging.getLogger(f"{__name__}.{name}")

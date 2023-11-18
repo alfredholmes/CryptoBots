@@ -27,9 +27,20 @@ async def main(args):
         print('subscribing to order books')
         await binance.subscribe_to_order_books(*markets)
 
-        for i in range(100):
+        for i in range(10):
             for market in markets:
-                print(f'{market[0]}-{market[1]}:', binance.order_books[market].mid_price())
+                print(f'{market[0]}-{market[1]}')
+                print('---------------------------')
+                print('Bid \t\t | Volume ')
+                print('---------------------------')
+                for v in binance.order_books[market].get_bids():
+                    print(f'{v} \t | {binance.order_books[market].bids[v]}')
+                print('---------------------------')
+                print('Ask \t\t | Volume')
+                print('---------------------------')
+                for v in binance.order_books[market].get_asks():
+                    print(f'{v} \t | {binance.order_books[market].asks[v]}')
+                print('---------------------------')
             await asyncio.sleep(1)
 
         print('closing connections...')

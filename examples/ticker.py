@@ -27,7 +27,7 @@ async def main(args):
         print('subscribing to order books')
         await binance.subscribe_to_order_books(*markets)
 
-        for i in range(100):
+        for i in range(10):
             for market in markets:
                 print(f'{market[0]}-{market[1]}:', binance.order_books[market].mid_price())
             await asyncio.sleep(1)

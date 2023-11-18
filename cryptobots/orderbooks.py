@@ -35,30 +35,28 @@ class OrderBook:
             Get the current best market sell price - the current highest bid
 
         """
-        return sorted(self.bids, reverse=True)[0]
+        return max(self.bids)
 
     def buy_price(self):
         """
             Gives the current best market buy price - the lowest ask
 
         """
-        return sorted(self.asks)[0]
+        return min(self.asks)
 
 
-    def ftx_checksum(self, n=100):
-        s = ''
-        
-        for bid, ask in zip(sorted(self.bids, reverse=True)[:100], sorted(self.asks)[:100]):
-            s += f'{bid}:{self.bids[bid]}:{ask}:{self.asks[ask]}:'
-        if len(self.bids) < len(self.asks): 
-            for ask in sorted(self.asks)[len(self.bids):100]:
-                s += f'{ask}:{self.asks[ask]}:'
-        if len(self.asks) < len(self.bids):
-            for bid in sorted(self.bids, reverse=True)[len(self.asks):100]:
-                s += f'{bid}:{self.bids[bid]}:'
+    def get_bids(self, depth=5):
+        """
+            Returns the best bid prices
+        """
+        return sorted(self.bids, reverse=True)[:depth]
 
-        s = s[:-1]
-        return binascii.crc32(s.encode('utf-8')) == self.checksum
+
+    def get_asks(self, depth=5):
+        """
+            Returns the best ask prices
+        """
+        return sorted(self.asks)[:depth]
 
 
 
