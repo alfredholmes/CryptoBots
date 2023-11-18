@@ -41,7 +41,7 @@ class Binance(Exchange):
                     if data_filter['filterType'] == 'LOT_SIZE':
                         market.size_increment = float(data_filter['stepSize'])
                         market.min_provide_size = float(data_filter['minQty'])        
-                    if data_filter['filterType'] == 'MIN_NOTIONAL':
+                    if data_filter['filterType'] == 'NOTIONAL':
                         market.min_quote_volume = float(data_filter['minNotional'])
                 self.markets[(market.base, market.quote)] = market
         except:

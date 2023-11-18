@@ -31,6 +31,24 @@ async def main():
         account = await exit_stack.enter_async_context(Account([keys.API, keys.SECRET], exchange, "USDT"))
         await account.get_account_balance() 
         print(account.balance)
+        print('dusting...')
+        
+        #get prices...
+
+        books = []
+
+        for asset in account.balance:
+            if asset != 'BNB' and (asset, 'USDT') in exchange.markets:
+                books.append((asset, 'USDT'))
+
+        print('getting prices')
+        await exchange.subscribe_to_order_books(*books)
+        
+
+        prices = {book[0]: exchange.order_books[book].mid_price() for book in books}
+
+        await account.dust('USDT', prices)
+
 
 
         print('closing connections...')

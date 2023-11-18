@@ -125,7 +125,7 @@ class SpotAccount:
                 continue
             if v < self.exchange.markets[(asset, base_asset)].min_provide_size:
                 assets.append(asset)
-            elif asset in prices and v * prices[asset] < self.exchange.markets[(asset, base_asset)].min_quote_volume:
+            elif v * prices[asset] < self.exchange.markets[(asset, base_asset)].min_quote_volume:
                 assets.append(asset)
         if len(assets) > 0:
              self.logger.info(f'Dusting {assets}')
