@@ -1,7 +1,8 @@
 #API keys file
 keys*
-#all csvfiles
+#all csvfiles and databases
 *.csv
+*.db
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
