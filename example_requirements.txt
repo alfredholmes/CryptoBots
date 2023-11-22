@@ -1,0 +1,4 @@
+#Dependencies
+websockets
+httpx
+peewee

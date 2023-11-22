@@ -18,12 +18,22 @@ class OrderBook:
         self.subscribed = True
         self.correct = False
         self.checksum = 0
+        self.record_updates = False #allow access to updates 
+        self.update_queue_passthrough = asyncio.Queue()
 
     async def close(self):
         self.subscribed = False
         self.update_parser.cancel()
         with suppress(asyncio.CancelledError):
             await self.update_parser
+
+
+    def passthrough_updates(self, mode=True):
+        if mode:
+            self.record_updates = True
+            return self.update_queue_passthrough
+        else:
+            self.record_updates = False
 
     def mid_price(self):
         if not self.initialised:
@@ -71,6 +81,8 @@ class OrderBook:
                 break
             self.update_event.set()
             self.update_event.clear()
+            if self.record_updates:
+                await self.update_queue_passthrough.put(update)
             if update['time'] < self.previous_time:
                 self.update_queue.task_done()
                 continue
