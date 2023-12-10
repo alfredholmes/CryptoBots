@@ -38,7 +38,7 @@ async def main():
         books = []
 
         for asset in account.balance:
-            if asset != 'BNB' and (asset, 'USDT') in exchange.markets:
+            if (asset, 'USDT') in exchange.markets:
                 books.append((asset, 'USDT'))
 
         print('getting prices')
