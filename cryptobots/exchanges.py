@@ -30,6 +30,14 @@ class Fill:
         self.price = price
         self.fees = fees
 
+
+class Trade:
+    def __init__(self, time, price, volume, side):
+        self.time = time
+        self.price = price
+        self.volume = volume
+        self.buy = side #True if maker is buyer
+
 class Order:
     def __init__(self, order_id, market, side, volume, price = None, order_type = 'unknown', status='new', filled_volume = 0):
         self.id = order_id
@@ -107,6 +115,7 @@ class Exchange(ABC):
         self.markets = {}
         self.order_books = {}
         self.order_book_queues = {}
+        self.trade_queues = {}
         self.market_names = {}
         self.user_updates = asyncio.Queue()
         self.connection_lock = asyncio.Lock()

@@ -4,7 +4,7 @@ from .connections import ConnectionManager
 from contextlib import suppress
 import httpx
 from .orderbooks import OrderBook
-from .exchanges import Exchange, Fill, Position, SpotMarket, Order, FutureMarket, OrderPlacementError, OrderClosed
+from .exchanges import Exchange, Fill, Trade, Position, SpotMarket, Order, FutureMarket, OrderPlacementError, OrderClosed
 
 
 class Binance(Exchange):
@@ -90,6 +90,13 @@ class Binance(Exchange):
     def connected(self) -> bool:
         return self.connection_manager.open
         
+    async def subscribe_to_trade_streams(self, *markets):
+        ws_request = {'method': 'SUBSCRIBE', 'params': [f'{self.markets[market].name.lower()}@trade' for market in markets]}
+        
+        for market in markets:
+            self.trade_queues[market] = asyncio.Queue()
+
+        await self.connection_manager.ws_send(ws_request)
 
 
     async def subscribe_to_order_books(self, *markets):
@@ -156,12 +163,18 @@ class Binance(Exchange):
                 stream = message['stream']
                 if 'depth' in stream:
                     await self.parse_order_book_message(message['data'])
+                elif 'trade' in message['stream']:
+                    await self.parse_trade_message(message['data'])
                 elif stream in self.user_ping_tasks:
                     await self.parse_user_update(message['data'])
             except Exception as e:
                 print('Error in ws parse', e)
                 print(message)
                 raise e
+
+    async def parse_trade_message(self, message):
+        market = self.market_names[message['s']]
+        await self.trade_queues[market].put(Trade(message['T'], float(message['p']), float(message['q']), message['m']))
 
     async def parse_order_book_message(self, message):
         message_data = {'time': message['u'], 'bids': [[float(b), float(v)] for b, v in message['b']], 'asks': [[float(a), float(v)] for a, v in message['a']]} 
